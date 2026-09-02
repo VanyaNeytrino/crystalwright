@@ -26,6 +26,27 @@ def eventually(timeout : Time::Span = 2.seconds, message : String = "condition w
   end
 end
 
+# The budget for an action that is meant to time out.
+#
+# These specs assert what the failure *says*, never how long it took, so this
+# number is a bound that keeps the suite quick rather than a claim about the
+# machine. It still has to hold at least one complete attempt — two, for the one
+# that reads the retry log — because the message only names what was wrong if
+# the library got far enough to find out. When it does not, the message
+# describes the deadline expiring inside a protocol round trip instead, and the
+# assertion fails while the library is correct.
+#
+# That is not hypothetical: it is how the suite went red on the sixth of ten
+# runs, with a click that never reached its own diagnosis.
+#
+# Measured on `covered.html`: one full attempt costs about 220 ms, and 2 seconds
+# bought nine of them — the same nine idle and under twice as many CPU spinners
+# as this machine has cores, so ordinary load is not what broke it. The run that
+# failed needed a single round trip to stall for 1.9 s, which is a stall rather
+# than slowness. No constant survives an unbounded one, so this is headroom with
+# a number behind it, not a proof; the debt is recorded in `docs/NEXT.md`.
+DOOMED_ACTION = 5.seconds
+
 # Opens a browser and one tab, and always closes both.
 def with_page(&)
   Crystalwright.launch do |browser|

@@ -72,7 +72,7 @@ module Crystalwright
     # Evaluates in this world and copies the result out.
     def evaluate(source : String, *args, progress : Progress? = nil) : JSValue
       progress ||= Progress.new("evaluate", DEFAULT_TIMEOUT)
-      response = call(declaration(source), args, by_value: true, progress: progress)
+      response = call(declaration(source), args, by_value: true, progress: progress, what: "the caller's expression")
       raw = response.result.value || raise SerializationError.new("the page returned nothing at all for #{source}")
       Serialization::Decoder.new.decode(raw)
     end
@@ -80,7 +80,7 @@ module Crystalwright
     # Evaluates in this world and leaves the result in the page.
     def evaluate_handle(source : String, *args, progress : Progress? = nil) : JSHandle
       progress ||= Progress.new("evaluate_handle", DEFAULT_TIMEOUT)
-      response = call(declaration(source), args, by_value: false, progress: progress)
+      response = call(declaration(source), args, by_value: false, progress: progress, what: "the caller's expression")
       object = response.result
       object_id = object.object_id
       unless object_id
@@ -136,7 +136,7 @@ module Crystalwright
     # argument through the same tagged encoding an `evaluate` argument uses, so
     # `text="'); alert(1); //"` is a piece of text on both sides of the wire.
     protected def invoke(name : String, *args, progress : Progress) : JSValue
-      response = call(utility_declaration(name), args, by_value: true, progress: progress)
+      response = call(utility_declaration(name), args, by_value: true, progress: progress, what: name)
       raw = response.result.value || raise SerializationError.new("#{name} returned nothing at all")
       Serialization::Decoder.new.decode(raw)
     end
@@ -146,7 +146,7 @@ module Crystalwright
     # Returns `nil` when the function answered with JavaScript `null`, which is
     # how "no element matched" arrives — an answer rather than a failure.
     protected def invoke_handle(name : String, *args, progress : Progress) : JSHandle?
-      object = call(utility_declaration(name), args, by_value: false, progress: progress).result
+      object = call(utility_declaration(name), args, by_value: false, progress: progress, what: name).result
       object_id = object.object_id
       return unless object_id
       track_issue
@@ -155,7 +155,7 @@ module Crystalwright
 
     # :ditto:
     protected def invoke_element(name : String, *args, progress : Progress) : ElementHandle?
-      object = call(utility_declaration(name), args, by_value: false, progress: progress).result
+      object = call(utility_declaration(name), args, by_value: false, progress: progress, what: name).result
       object_id = object.object_id
       return unless object_id
       track_issue
@@ -197,7 +197,8 @@ module Crystalwright
       end
     end
 
-    private def call(declaration : String, args, by_value : Bool, progress : Progress) : CDP::Protocol::Runtime::CallFunctionOnResponse
+    private def call(declaration : String, args, by_value : Bool, progress : Progress,
+                     what : String) : CDP::Protocol::Runtime::CallFunctionOnResponse
       raise ContextDestroyedError.new if destroyed?
       progress.check!
 
@@ -217,8 +218,6 @@ module Crystalwright
         arguments << CDP::Protocol::Runtime::CallArgument.new(object_id: handle_id)
       end
 
-      progress.log("calling into the #{@name.empty? ? "main" : @name} world")
-
       response = execute(CDP::Protocol::Runtime::CallFunctionOnRequest.new(
         function_declaration: declaration,
         object_id: utility_object_id(progress),
@@ -227,7 +226,7 @@ module Crystalwright
         await_promise: true,
         user_gesture: false,
         object_group: @object_group,
-      ), progress)
+      ), progress, what)
 
       if details = response.exception_details
         raise evaluation_error(details)
@@ -289,14 +288,26 @@ module Crystalwright
     # Chrome reports a destroyed context as a generic `-32000` whose text is the
     # only thing distinguishing it from any other internal error. Letting that
     # through would make every retry loop above match on English prose.
-    private def execute(request, progress : Progress)
+    private def execute(request, progress : Progress, what : String? = nil)
       progress.check!
       @session.execute(request, progress.remaining)
     rescue error : CDP::ProtocolError
       raise ContextDestroyedError.new(error.message.to_s) if context_gone?(error)
       raise error
     rescue error : CDP::TimeoutError
-      raise progress.timed_out(error.message)
+      # Named here rather than logged before every call. A line per round trip
+      # doubles the length of a message whose whole value is that it reads in
+      # one glance: "waiting for the element to be visible, enabled, stable"
+      # followed by "running checkStates" says the same thing twice. The name
+      # earns its place only when the deadline expires inside the call, which is
+      # the one case where the log otherwise stops mid-step and blames the
+      # protocol for whatever this shard happened to be asking.
+      raise progress.timed_out(what ? "  running #{what} in #{world_description}: #{error.message}" : error.message)
+    end
+
+    # Which world, without the random suffix that makes the name unrepeatable.
+    private def world_description : String
+      @name.empty? ? "the page's own world" : "the isolated world"
     end
 
     private def context_gone?(error : CDP::ProtocolError) : Bool

@@ -68,7 +68,7 @@ describe "actions", tags: "integration" do
             page.goto(server.url("/covered.html"))
 
             error = expect_raises(Crystalwright::TimeoutError) do
-              page.click("#target", timeout: 2.seconds)
+              page.click("#target", timeout: DOOMED_ACTION)
             end
 
             # A fully transparent overlay is visible by every measure and still
@@ -88,7 +88,7 @@ describe "actions", tags: "integration" do
             page.goto(server.url("/modal.html"))
 
             error = expect_raises(Crystalwright::TimeoutError) do
-              page.click("#target", timeout: 2.seconds)
+              page.click("#target", timeout: DOOMED_ACTION)
             end
 
             # The element under the pointer is the dialog, but what a person
@@ -176,7 +176,7 @@ describe "actions", tags: "integration" do
             page.goto(server.url("/covered.html"))
 
             error = expect_raises(Crystalwright::TimeoutError) do
-              page.click("#target", timeout: 1.second)
+              page.click("#target", timeout: DOOMED_ACTION)
             end
 
             # An action that failed twelve times has to be able to say what it
@@ -186,6 +186,48 @@ describe "actions", tags: "integration" do
             message.should contain "retrying click"
             message.should contain "aiming at"
             message.should contain "waiting for the element to be"
+          end
+        end
+      end
+
+      it "names what it was asking when the deadline lands inside a round trip" do
+        with_fixtures do |server|
+          with_page do |page|
+            page.goto(server.url("/covered.html"))
+
+            # The budget is searched for rather than guessed. A deadline that
+            # expires *between* two round trips stops the log at a whole step,
+            # which is the ordinary case every other spec here covers; landing
+            # *inside* one needs a budget shorter than a single call, and how
+            # short that is belongs to the machine. So the loop grows the budget
+            # until it lands there, and the spec is about the shape of the
+            # message rather than about any number in it.
+            message = nil
+            30.times do |i|
+              error = expect_raises(Crystalwright::TimeoutError) do
+                page.click("#target", timeout: (20 + i * 5).milliseconds)
+              end
+              text = error.message.to_s
+              if text.includes?("running")
+                message = text
+                break
+              end
+            end
+
+            # This is the failure that went red once and could not be read: the
+            # log said which CDP method was busy and which internal world it
+            # was busy in, and nothing about what the library wanted. What a
+            # caller needs is the question, not the plumbing.
+            message.should_not be_nil
+            text = message.to_s
+            text.should contain "waiting for the element to be"
+            text.should contain "running checkStates in the isolated world"
+            text.should contain "Runtime.callFunctionOn"
+
+            # The world's name is generated per browser, so a message carrying
+            # it is a message that reads differently every run and can never be
+            # searched for twice.
+            text.should_not contain "__crystalwright_utility_"
           end
         end
       end
@@ -238,10 +280,10 @@ describe "actions", tags: "integration" do
             page.goto(server.url("/forms.html"))
 
             expect_raises(Crystalwright::TimeoutError, /editable/) do
-              page.fill("#readonly", "nope", timeout: 1.second)
+              page.fill("#readonly", "nope", timeout: DOOMED_ACTION)
             end
             expect_raises(Crystalwright::TimeoutError, /enabled/) do
-              page.fill("#disabled", "nope", timeout: 1.second)
+              page.fill("#disabled", "nope", timeout: DOOMED_ACTION)
             end
             page.query_selector("#readonly").try(&.value).should eq "fixed"
           end
@@ -257,7 +299,7 @@ describe "actions", tags: "integration" do
             # contents of its own first <legend>. That exception is in the HTML
             # specification and is not the kind of thing anybody guesses.
             expect_raises(Crystalwright::TimeoutError, /enabled/) do
-              page.fill("#in-fieldset", "nope", timeout: 1.second)
+              page.fill("#in-fieldset", "nope", timeout: DOOMED_ACTION)
             end
             page.fill("#in-legend", "allowed", timeout: 5.seconds)
             page.query_selector("#in-legend").try(&.value).should eq "allowed"
