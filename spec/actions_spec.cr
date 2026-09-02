@@ -218,11 +218,17 @@ describe "actions", tags: "integration" do
             # log said which CDP method was busy and which internal world it
             # was busy in, and nothing about what the library wanted. What a
             # caller needs is the question, not the plumbing.
+            #
+            # Which step it lands in is the machine's business and not this
+            # spec's: a loaded one expires inside the very first call, a quick
+            # one gets as far as the actionability check. Naming the step here
+            # is how this spec went red on the second run of its own gate. What
+            # is guaranteed is the shape — some function of this shard's, in a
+            # world described rather than identified, and the protocol error
+            # kept rather than swallowed.
             message.should_not be_nil
             text = message.to_s
-            text.should contain "waiting for the element to be"
-            text.should contain "running checkStates in the isolated world"
-            text.should contain "Runtime.callFunctionOn"
+            text.should match(/\n  running [A-Za-z]+ in the isolated world: Runtime\.callFunctionOn did not answer/)
 
             # The world's name is generated per browser, so a message carrying
             # it is a message that reads differently every run and can never be
