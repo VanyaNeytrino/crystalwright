@@ -29,6 +29,7 @@ class FixtureServer
   }
 
   @requests = [] of String
+  @last_response_at : Time::Instant?
   @mutex = Sync::Mutex.new
 
   # `pages` is an escape hatch for a one-off body a spec would rather write
@@ -38,6 +39,7 @@ class FixtureServer
       request = context.request
       @mutex.synchronize { @requests << request.resource }
       serve(context, request.path, request.query_params)
+      @mutex.synchronize { @last_response_at = Time.instant }
     end
 
     @port = @server.bind_tcp("127.0.0.1", 0).port
@@ -67,6 +69,15 @@ class FixtureServer
   # How many times a path has been asked for, ignoring the query string.
   def request_count(path : String) : Int32
     requests.count { |resource| resource == path || resource.starts_with?("#{path}?") }
+  end
+
+  # When this server last finished answering something.
+  #
+  # The reference point a timing spec needs. "Quiet started 500 ms ago" is a
+  # statement about the network, and measuring it from when a spec happened to
+  # call `goto` measures the machine's load instead.
+  def last_response_at : Time::Instant?
+    @mutex.synchronize { @last_response_at }
   end
 
   # Stops serving.

@@ -30,15 +30,18 @@ describe "actions", tags: "integration" do
         with_fixtures do |server|
           with_page do |page|
             page.goto(server.url("/late-enable.html"))
-
-            started = Time.instant
             page.click("#target", timeout: 8.seconds)
-            elapsed = Time.instant - started
 
+            # A disabled button does not receive clicks at all, so this alone
+            # says the wait happened.
             page.text_content("#result").should eq "clicked"
-            # The button is disabled for 300 ms. Getting here sooner would mean
-            # the enabled check is not being made.
-            elapsed.should be >= 300.milliseconds
+
+            # And the page's own clock says it in a form no amount of machine
+            # load can shift: the click arrived after the button was enabled.
+            # Comparing elapsed wall time against 300 ms measured from the wrong
+            # zero — the page loads before the click begins — is what an earlier
+            # version of this spec did, and it failed twice in twenty runs.
+            page.evaluate("() => window.__clickedAt >= window.__enabledAt").as_bool.should be_true
           end
         end
       end
@@ -156,8 +159,13 @@ describe "actions", tags: "integration" do
             # been able to observe until now: the retries are nested three deep
             # and none of them has a clock of its own, so the caller's number is
             # the only one that decides when to stop.
-            first.should be_close(1.second, 700.milliseconds)
-            second.should be_close(3.seconds, 900.milliseconds)
+            # Stated as a relationship rather than as two wall-clock windows.
+            # What has to be true is that the budget is what decides — not the
+            # number of attempts, which is what a per-attempt timeout would give
+            # and which would make both of these take the same time.
+            first.should be < 2.seconds
+            second.should be >= first + 1.second
+            second.should be < 5.seconds
           end
         end
       end

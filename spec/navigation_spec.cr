@@ -62,16 +62,26 @@ describe "navigation", tags: "integration" do
           with_page do |page|
             started = Time.instant
             page.goto(server.url("/slow-resources.html"), Crystalwright::LoadState::NetworkIdle, 10.seconds)
-            elapsed = Time.instant - started
+            settled = Time.instant
 
             # The last script answers 600 ms in, so quiet cannot be declared
             # before 1100 ms. A window of zero gets here in about 650 ms.
-            elapsed.should be >= 1050.milliseconds
+            (settled - started).should be >= 1050.milliseconds
 
-            # And it must not be Chrome's `networkIdle` lifecycle event, which
-            # was measured on this fixture at 1311 ms after the last request
-            # finished — roughly 1950 ms in — and which varies run to run.
-            elapsed.should be < 1700.milliseconds
+            # And it must not be Chrome's own `networkIdle`, which was measured
+            # on this fixture at 1311 ms after the last request finished.
+            #
+            # Measured from when the *server* last answered rather than from
+            # when this spec started, which is the only reference point that
+            # does not move with the load on the machine. An earlier version
+            # compared elapsed wall time against a fixed ceiling and failed once
+            # in twenty runs while the library was doing exactly the right
+            # thing.
+            answered = server.last_response_at
+            answered.should_not be_nil
+            if answered
+              (settled - answered).should be < 900.milliseconds
+            end
 
             server.request_count("/slow").should eq 3
           end

@@ -5,10 +5,16 @@
     <button id="target" disabled>Not yet</button>
     <div id="result">not clicked</div>
     <script>
+      // Both moments are recorded, so a spec can compare them instead of
+      // comparing a wall clock against a number. The page's own clock is the
+      // only one that knows when the button became usable, and it does not care
+      // how loaded the machine is.
       document.getElementById("target").addEventListener("click", function () {
+        window.__clickedAt = performance.now();
         document.getElementById("result").textContent = "clicked";
       });
       setTimeout(function () {
+        window.__enabledAt = performance.now();
         document.getElementById("target").removeAttribute("disabled");
       }, 300);
     </script>
