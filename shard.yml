@@ -1,0 +1,31 @@
+name: crystalwright
+version: 0.1.0
+
+authors:
+  - Ivan <vanya.neytrino@gmail.com>
+
+description: |
+  A Playwright-style browser automation API for Crystal, built on the Chrome
+  DevTools Protocol. Execution contexts, handles to live JavaScript values, and
+  auto-waiting actions — no Node.js and no driver process.
+
+license: MIT
+
+crystal: ">= 1.21.0"
+
+dependencies:
+  # The protocol half of this stack: transport, session tree and typed bindings
+  # for every command and event. Pinned to a released tag rather than a branch,
+  # because shard.lock is not committed and a floating constraint means a fresh
+  # checkout resolves to whatever upstream looks like that morning.
+  cdp:
+    github: VanyaNeytrino/cdp.cr
+    version: ~> 0.1.0
+
+development_dependencies:
+  # 1.7.0 or newer. Anything in 1.6.x fails to build against Crystal 1.21 — the
+  # compiler's lexer API moved under it — so this floor is a build requirement
+  # rather than a preference.
+  ameba:
+    github: crystal-ameba/ameba
+    version: ~> 1.7.0

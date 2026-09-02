@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CRYSTAL_VERSION: "1.21.0"
+
+jobs:
+  # Everything that needs no browser. Fast enough to be the gate on every push.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ env.CRYSTAL_VERSION }}
+      - run: shards install
+      - run: crystal tool format --check
+      - run: crystal spec --tag "~integration"
+
+  # The same suite with the runtime's parallelism actually turned on.
+  #
+  # Crystal 1.21 defaults to a parallelism of one, so fibers interleave but never
+  # run at the same time, which means the default run cannot fail on a data race.
+  # The shard below found a missing mutex this way after twenty thousand commands
+  # had passed without it. Whatever else changes, this job stays.
+  parallel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ env.CRYSTAL_VERSION }}
+      - run: shards install
+      - run: crystal spec --tag "~integration"
+        env:
+          CRYSTALWRIGHT_SPEC_PARALLEL: "8"
+
+  # Specs that drive a real browser. Run ten times: an integration test that
+  # fails one time in ten is a bug that has been found, not a test that needs a
+  # retry.
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ env.CRYSTAL_VERSION }}
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, and
+      # a downloaded Chromium carries no setuid sandbox helper to fall back on, so
+      # its zygote dies before the browser says a word. The runner is what gets
+      # adjusted, not the launch: passing --no-sandbox would make the specs green
+      # by making them assert nothing.
+      - name: Let Chrome's sandbox use user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: shards install
+      - name: Run the browser specs ten times
+        env:
+          CDP_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          for attempt in $(seq 1 10); do
+            echo "::group::attempt $attempt"
+            crystal spec --tag integration || exit 1
+            echo "::endgroup::"
+          done
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ env.CRYSTAL_VERSION }}
+      - run: shards install
+      - run: mkdir -p bin
+      - run: crystal build --no-debug -o bin/ameba lib/ameba/src/cli.cr
+      - run: ./bin/ameba
+      - run: crystal docs -o /tmp/docs
+
+  # The injected script is embedded into the binary at compile time, so the
+  # compiler never looks at it. A syntax error in it is invisible until a page
+  # throws at runtime, and what it throws points at a line number inside a
+  # string. One `node --check` is the whole fix.
+  script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --check src/crystalwright/js/utility_script.js

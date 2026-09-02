@@ -1,0 +1,20 @@
+# Public API must be documented. This shard is meant to be read by people who
+# are debugging a browser at three in the morning, and an undocumented method is
+# a method they have to guess at.
+Documentation:
+  Enabled: true
+
+# `.not_nil!` is banned outright. The compiler cannot see through it, and when it
+# fails it crashes with nothing to say for itself. Use `if x = maybe` or raise a
+# real error with a real message.
+Lint/NotNil:
+  Enabled: true
+
+Metrics/CyclomaticComplexity:
+  MaxComplexity: 15
+
+# Our code only. `!lib` keeps shards' vendored dependencies out — without it
+# ameba reports on ameba's own source.
+Globs:
+  - "**/*.cr"
+  - "!lib"
