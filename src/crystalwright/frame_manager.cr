@@ -4,6 +4,7 @@ require "./lifecycle"
 require "./frame"
 require "./signal_barrier"
 require "./input"
+require "./route"
 require "./progress"
 
 module Crystalwright
@@ -19,6 +20,8 @@ module Crystalwright
   # `LoadState::NetworkIdle`, which becomes true through the passage of time
   # with no message to announce it, so a waiter for it says when to look again.
   class FrameManager
+    Log = ::Log.for("crystalwright.route")
+
     # The protocol session for the page.
     getter session : CDP::Session
 
@@ -40,6 +43,8 @@ module Crystalwright
     @waiters = [] of Channel(Nil)
     @barriers = [] of SignalBarrier
     @request_frames = {} of String => String
+    @routes = [] of RouteHandler
+    @resync_on_commit = false
     @main_frame : Frame?
 
     # :nodoc:
@@ -134,6 +139,7 @@ module Crystalwright
       watch_page
       watch_runtime
       watch_network
+      watch_fetch
 
       @session.execute(CDP::Protocol::Page::EnableRequest.new, timeout)
       @session.execute(CDP::Protocol::Page::SetLifecycleEventsEnabledRequest.new(enabled: true), timeout)
@@ -191,6 +197,13 @@ module Crystalwright
       # and describes a document that does not exist yet — measured.
       @session.on(CDP::Protocol::Page::FrameNavigatedEvent) do |event|
         info = event.frame
+        resync = @mutex.synchronize do
+          wanted = @resync_on_commit && info.parent_id.nil?
+          @resync_on_commit = false if wanted
+          wanted
+        end
+        spawn(name: "resync") { resync_contexts } if resync
+
         change do
           frame = upsert_locked(info.id, info.parent_id)
 
@@ -301,6 +314,99 @@ module Crystalwright
 
       @session.on(CDP::Protocol::Network::LoadingFinishedEvent) { |event| finish(event.request_id) }
       @session.on(CDP::Protocol::Network::LoadingFailedEvent) { |event| finish(event.request_id) }
+    end
+
+    # :nodoc:
+    #
+    # Interception is turned on with the first route and off with the last, so a
+    # page nobody is routing pays nothing: with `Fetch` enabled every single
+    # request stops and waits for an answer, which is a round trip added to each
+    # one.
+    protected def add_route(pattern : URLPattern, handler : Route -> Nil, timeout : Time::Span) : Nil
+      first = @mutex.synchronize do
+        was_empty = @routes.empty?
+        @routes << RouteHandler.new(pattern, handler)
+        was_empty
+      end
+      return unless first
+
+      @session.execute(CDP::Protocol::Fetch::EnableRequest.new(
+        patterns: [CDP::Protocol::Fetch::RequestPattern.new(url_pattern: "*")]), timeout)
+    end
+
+    # :nodoc:
+    protected def remove_routes(pattern : URLPattern?, timeout : Time::Span) : Nil
+      empty = @mutex.synchronize do
+        if pattern
+          wanted = pattern.to_s
+          @routes.reject! { |handler| handler.pattern.to_s == wanted }
+        else
+          @routes.clear
+        end
+        @routes.empty?
+      end
+      return unless empty
+
+      @session.execute(CDP::Protocol::Fetch::DisableRequest.new, timeout)
+    rescue CDP::Error
+      # The page is going away, which turns interception off more thoroughly
+      # than the command would have.
+    end
+
+    # :nodoc:
+    #
+    # Asks the browser to announce the execution contexts all over again.
+    #
+    # For a tab that was held still before its first statement. Measured: the
+    # contexts of the document such a tab then loads are never announced at all
+    # — not late, not on the wrong session, simply absent — and `Runtime.enable`
+    # a second time replays nothing, because the agent is already on. Turning it
+    # off and on again is what produces the snapshot, and every later navigation
+    # in that tab behaves normally.
+    #
+    # One extra round trip, on the one commit that needs it.
+    protected def resync_contexts(timeout : Time::Span = 10.seconds) : Nil
+      @session.execute(CDP::Protocol::Runtime::DisableRequest.new, timeout)
+      @session.execute(CDP::Protocol::Runtime::EnableRequest.new, timeout)
+    rescue CDP::Error
+      # The tab went away, which is a different problem and its own error.
+    end
+
+    # :nodoc:
+    protected def resync_after_first_commit : Nil
+      @mutex.synchronize { @resync_on_commit = true }
+    end
+
+    private def watch_fetch : Nil
+      @session.on(CDP::Protocol::Fetch::RequestPausedEvent) do |event|
+        # The browser is holding this request open until somebody answers, and
+        # the answer travels over the same connection that delivered the event.
+        # A handler run here would be waiting on a fiber that cannot proceed
+        # until it returns, and a handler that touches the page — which is most
+        # of them — would deadlock outright.
+        handlers = @mutex.synchronize { @routes.reverse }
+        route = Route.new(@session, event.request_id, event.request, event.resource_type)
+        matched = handlers.find(&.handles?(event.request.url))
+
+        spawn(name: "route") { dispatch_route(matched, route, event.request.url) }
+      end
+    end
+
+    private def dispatch_route(matched : RouteHandler?, route : Route, url : String) : Nil
+      matched.call(route) if matched
+    rescue error
+      Log.error(exception: error) { "a route handler for #{url} raised" }
+    ensure
+      # An unmatched request, or one whose handler forgot, is let through rather
+      # than left hanging: the alternative is a page that waits for its own
+      # timeout and looks exactly like a slow server.
+      let_through(route) unless route.answered?
+    end
+
+    private def let_through(route : Route) : Nil
+      route.continue
+    rescue CDP::Error
+      # The request went away with the page it belonged to.
     end
 
     private def finish(request_id : String) : Nil

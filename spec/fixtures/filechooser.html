@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <head><title>file chooser</title></head>
+  <body>
+    <input id="one" type="file" style="position:absolute;top:40px;left:20px" />
+    <input id="many" type="file" multiple style="position:absolute;top:90px;left:20px" />
+    <div id="picked">none</div>
+    <script>
+      ["one", "many"].forEach(function (id) {
+        document.getElementById(id).addEventListener("change", function () {
+          document.getElementById("picked").textContent =
+            Array.prototype.map.call(this.files, function (f) { return f.name; }).join(", ");
+        });
+      });
+    </script>
+  </body>
+</html>

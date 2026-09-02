@@ -9,9 +9,10 @@ command and event Chrome knows about — and this shard is the part with opinion
 JavaScript worlds, handles to live values, and eventually locators and
 auto-waiting actions. No Node.js, no driver process, one static binary.
 
-Status: **usable, and not finished**. Navigation, frames, selectors, locators,
-the auto-waiting actions and assertions that wait all work. Network
-interception, screenshots, cookies, downloads and popups are not written yet.
+Status: **usable**. Navigation, frames, selectors, locators, auto-waiting
+actions, assertions that wait, network interception, downloads, file pickers,
+popups, screenshots and cookies all work. What is deliberately absent is listed
+under *Not here* below.
 
 ```crystal
 require "crystalwright"
@@ -249,6 +250,57 @@ page's scripts wrote to.
 This library's own code runs in an isolated world instead, so that a page cannot
 see it, break it, or be broken by it. `page.evaluate_in_utility` reaches it
 directly.
+
+## Answering requests yourself
+
+```crystal
+page.route("**/api/**") do |route|
+  route.fulfill(status: 200, body: %({"items": []}), content_type: "application/json")
+end
+
+page.route("**/*.{png,jpg}", &.abort)     # no images, for a faster suite
+page.unroute("**/api/**")                 # and back to the real thing
+```
+
+The handler runs on a fiber of its own and may take as long as it likes,
+including waiting on the page. A pattern is a glob — `*` is one path segment,
+`**` is any number, `{a,b}` is either — because the alternative is escaping
+every dot in a hostname by hand, and the version with one dot left unescaped
+matches hosts nobody meant.
+
+## Files, popups and pictures
+
+```crystal
+download = page.expect_download { page.click("#report") }
+download.save_into("tmp/reports")         # a name that cannot leave the directory
+
+page.set_input_files("#avatar", "spec/fixtures/face.png")
+
+popup = page.expect_popup { page.click("#terms") }
+popup.wait_for_load_state
+
+page.screenshot(path: "tmp/page.png", full_page: true)
+page.set_viewport(1280, 720)
+```
+
+A popup is held still before its own first statement, configured, and only then
+released — so `browser.add_init_script` is genuinely in place before anything
+the page does.
+
+## Not here
+
+Deliberately, and worth knowing before you start:
+
+* **`get_by_role` and ARIA.** Computing an accessible name correctly is a large
+  piece of work, and a `get_by_role` that is nearly right is worse than none.
+  `aria-disabled` and `aria-readonly` are not honoured for the same reason.
+* **Cross-origin iframes.** Chrome puts one in its own process and does not
+  report it to the parent at all, so `page.frame(...)` returns `nil` rather than
+  something that hangs. Driving one needs a protocol session per frame.
+* **Closed shadow roots**, which are unreachable from an isolated world — a
+  property of the platform rather than a decision.
+* Tracing, video, HAR, the code generator, and a test runner. Integrating with
+  Crystal's own `spec` is a helper, not a framework.
 
 ## Requirements
 

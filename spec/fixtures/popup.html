@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+  <head><title>opener</title></head>
+  <body>
+    <a id="go" href="/popped.html" target="_blank" style="position:absolute;top:40px;left:20px">open it</a>
+    <script>
+      window.__open = function () { window.open("/popped.html", "popped"); };
+    </script>
+  </body>
+</html>

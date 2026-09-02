@@ -103,6 +103,16 @@ class FixtureServer
       context.response.headers["Content-Security-Policy"] =
         "default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'"
       serve_file(context, path.sub("/strict-csp", ""))
+    when "/attachment"
+      # The name is chosen by the page, and `../` in it is expected rather than
+      # exotic. Serving it is the only way to find out what the browser and this
+      # shard actually do with it.
+      context.response.headers["Content-Disposition"] = %(attachment; filename="../../evil.txt")
+      context.response.content_type = "application/octet-stream"
+      context.response.print("the payload")
+    when "/api/items"
+      context.response.content_type = CONTENT_TYPES[".json"]
+      context.response.print(%({"items": ["from the server"]}))
     when "/redirect"
       context.response.status = HTTP::Status::FOUND
       context.response.headers["Location"] = query["to"]? || "/poll"

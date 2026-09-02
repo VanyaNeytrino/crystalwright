@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <head><title>popped</title></head>
+  <body>
+    <div id="who">the popup</div>
+    <script>
+      // The first statement the page runs. If an init script is genuinely in
+      // place before it, `__marker` is already set by the time this reads it —
+      // and that is the only way to prove the ordering, because everything else
+      // about a popup looks the same either way.
+      window.__markerWasAlreadyThere = window.__marker !== undefined;
+    </script>
+  </body>
+</html>

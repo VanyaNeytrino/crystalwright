@@ -1,3 +1,4 @@
+require "base64"
 require "cdp"
 require "./errors"
 require "./js_value"
@@ -6,6 +7,8 @@ require "./lifecycle"
 require "./execution_context"
 require "./js_handle"
 require "./frame_manager"
+require "./download"
+require "./file_chooser"
 
 module Crystalwright
   # One tab.
@@ -31,12 +34,16 @@ module Crystalwright
     # The frame tree and everything that keeps it current.
     getter frames_manager : FrameManager
 
+    # The target of the tab that opened this one, when it is a popup.
+    getter opener_target_id : String?
+
     @dialog_handlers = [] of Proc(CDP::Protocol::Page::JavascriptDialogOpeningEvent, Nil)
     @mutex = Sync::Mutex.new
     @closed = false
 
     # :nodoc:
-    def initialize(@session : CDP::Session, @target_id : String)
+    def initialize(@session : CDP::Session, @target_id : String, @browser : Browser,
+                   @opener_target_id : String? = nil)
       @utility_world_name = "__crystalwright_utility_#{Random::Secure.hex(8)}"
       @frames_manager = FrameManager.new(@session, @utility_world_name)
     end
@@ -45,6 +52,22 @@ module Crystalwright
     protected def start(timeout : Time::Span) : Nil
       watch_dialogs
       @frames_manager.start(timeout)
+      @browser.init_scripts.each { |source| add_init_script(source, timeout) }
+    end
+
+    # :nodoc:
+    protected def resync_after_first_commit : Nil
+      @frames_manager.resync_after_first_commit
+    end
+
+    # Runs this source at the start of every document in this tab, before
+    # anything the page itself runs.
+    #
+    # For every tab rather than this one, and for tabs that do not exist yet,
+    # use `Browser#add_init_script`.
+    def add_init_script(source : String, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+      @session.execute(CDP::Protocol::Page::AddScriptToEvaluateOnNewDocumentRequest.new(
+        source: source), timeout)
     end
 
     # The tab's top frame.
@@ -86,6 +109,207 @@ module Crystalwright
     def with_navigation_signals(timeout : Time::Span? = nil, &)
       progress = Progress.new("action", timeout || DEFAULT_TIMEOUT)
       @frames_manager.with_signals(progress) { yield }
+    end
+
+    # A PNG of the page.
+    #
+    # Returns the bytes, and writes them to `path` as well when one is given.
+    # `full_page` captures everything there is to scroll rather than what
+    # happens to be on screen.
+    def screenshot(path : String? = nil, full_page : Bool = false,
+                   timeout : Time::Span = DEFAULT_TIMEOUT) : Bytes
+      response = @session.execute(CDP::Protocol::Page::CaptureScreenshotRequest.new(
+        format: CDP::Protocol::Page::CaptureScreenshotRequestFormat::Png,
+        capture_beyond_viewport: full_page), timeout)
+
+      bytes = Base64.decode(response.data)
+      if path
+        Dir.mkdir_p(File.dirname(path)) unless Dir.exists?(File.dirname(path))
+        File.write(path, bytes)
+      end
+      bytes
+    end
+
+    # Sets the size of the area the page is rendered into.
+    #
+    # An override rather than a window resize: the window keeps whatever size
+    # the operating system gave it, and the page is told it has this one. That
+    # is the only version that works when the browser is headless and has no
+    # window at all.
+    def set_viewport(width : Int32, height : Int32, device_scale_factor : Float64 = 1.0,
+                     mobile : Bool = false, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+      @session.execute(CDP::Protocol::Emulation::SetDeviceMetricsOverrideRequest.new(
+        width: width, height: height,
+        device_scale_factor: device_scale_factor, mobile: mobile), timeout)
+    end
+
+    # Tells the page it is somewhere.
+    #
+    # Only answers a request for a position; it does not grant permission to
+    # ask. `grant_permissions("geolocation")` is the other half, and without it
+    # a page gets the same refusal a person's browser would give it.
+    def set_geolocation(latitude : Float64, longitude : Float64, accuracy : Float64 = 10.0,
+                        timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+      @session.execute(CDP::Protocol::Emulation::SetGeolocationOverrideRequest.new(
+        latitude: latitude, longitude: longitude, accuracy: accuracy), timeout)
+    end
+
+    # Runs an action that downloads a file, and hands back the file.
+    #
+    # ```
+    # download = page.expect_download { page.click("#report") }
+    # download.save_into("tmp/reports")
+    # ```
+    def expect_download(timeout : Time::Span? = nil, &) : Download
+      progress = Progress.new("expect_download", timeout || DEFAULT_TIMEOUT)
+      @browser.enable_downloads(progress.remaining)
+
+      root = @session.connection.root
+      beginning = Channel(CDP::Protocol::Browser::DownloadWillBeginEvent).new(1)
+      finished = Channel(String).new(4)
+
+      began = root.on(CDP::Protocol::Browser::DownloadWillBeginEvent) do |event|
+        select
+        when beginning.send(event)
+        else
+        end
+      end
+      progressed = root.on(CDP::Protocol::Browser::DownloadProgressEvent) do |event|
+        unless event.state.in_progress?
+          select
+          when finished.send(event.guid)
+          else
+          end
+        end
+      end
+
+      begin
+        yield
+
+        started = receive_within(beginning, progress, "a download to begin")
+        # The identifier, not the suggested name: with the naming behaviour this
+        # shard asks for, that is what the file on disk is called, and nothing
+        # the page says can change it.
+        loop do
+          guid = receive_within(finished, progress, "the download to finish")
+          break if guid == started.guid
+          raise progress.timed_out("waiting for the download to finish") if progress.expired?
+        end
+
+        Download.new(started.url, started.suggested_filename,
+          File.join(@browser.downloads_path, started.guid))
+      ensure
+        began.cancel
+        progressed.cancel
+      end
+    end
+
+    # Runs an action that opens a file picker, and hands back the picker.
+    #
+    # The action has to produce a real input event — `page.click` does, and
+    # calling `.click()` from JavaScript does not, because a picker only opens
+    # for a user gesture.
+    def expect_file_chooser(timeout : Time::Span? = nil, &) : FileChooser
+      progress = Progress.new("expect_file_chooser", timeout || DEFAULT_TIMEOUT)
+      @session.execute(CDP::Protocol::Page::SetInterceptFileChooserDialogRequest.new(
+        enabled: true), progress.remaining)
+
+      opened = Channel(CDP::Protocol::Page::FileChooserOpenedEvent).new(1)
+      watching = @session.on(CDP::Protocol::Page::FileChooserOpenedEvent) do |event|
+        select
+        when opened.send(event)
+        else
+        end
+      end
+
+      begin
+        yield
+        event = receive_within(opened, progress, "a file picker to open")
+        node = event.backend_node_id
+        raise Error.new("The file picker did not say which input it belongs to.") unless node
+        FileChooser.new(@session, node, event.mode.select_multiple?)
+      ensure
+        watching.cancel
+        begin
+          @session.execute(CDP::Protocol::Page::SetInterceptFileChooserDialogRequest.new(
+            enabled: false), 5.seconds)
+        rescue CDP::Error
+        end
+      end
+    end
+
+    # Hands files to a file input directly, without opening a picker.
+    #
+    # What most callers want: there is no dialog to intercept and no user
+    # gesture to arrange, because the input is set rather than the picker
+    # answered.
+    def set_input_files(selector : String, *paths : String, timeout : Time::Span? = nil) : Nil
+      set_input_files(selector, paths.to_a, timeout)
+    end
+
+    # :ditto:
+    def set_input_files(selector : String, paths : Array(String), timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("set_input_files #{selector}", timeout || DEFAULT_TIMEOUT)
+      element = main_frame.wait_for_selector(selector, ElementState::Attached, progress.remaining)
+      raise Error.new("No element matched #{selector.inspect}.") unless element
+
+      begin
+        missing = paths.reject { |path| File.exists?(path) }
+        raise Error.new("No such file: #{missing.join(", ")}") unless missing.empty?
+
+        @session.execute(CDP::Protocol::DOM::SetFileInputFilesRequest.new(
+          files: paths.map { |path| File.expand_path(path) },
+          object_id: element.remote_object_id), progress.remaining)
+      ensure
+        element.dispose
+      end
+    end
+
+    # Runs an action that opens a tab, and hands back the new tab.
+    #
+    # The new tab is held still before its own first statement runs, set up, and
+    # only then released — so an init script registered on it is genuinely in
+    # place before anything the page does.
+    def expect_popup(timeout : Time::Span? = nil, &) : Page
+      progress = Progress.new("expect_popup", timeout || DEFAULT_TIMEOUT)
+      yield
+
+      loop do
+        if found = @browser.take_popup(@target_id)
+          return found
+        end
+        raise progress.timed_out("waiting for a tab to open") if progress.expired?
+
+        select
+        when @browser.popup_bell.receive
+        when timeout({progress.remaining, 50.milliseconds}.min)
+        end
+      end
+    end
+
+    # Answers matching requests yourself instead of letting them out.
+    #
+    # ```
+    # page.route("**/api/**") do |route|
+    #   route.fulfill(status: 200, body: %({"items": []}), content_type: "application/json")
+    # end
+    # ```
+    #
+    # The handler runs on a fiber of its own and may take as long as it likes,
+    # including waiting on the page. Exactly one of `fulfill`, `abort` or
+    # `continue` has to be called; a handler that returns without answering has
+    # the request let through for it, because a request left hanging looks to
+    # the page like a server that never replied.
+    #
+    # The most recently added handler that matches wins, so a specific route
+    # added later overrides a general one added earlier.
+    def route(pattern : String | Regex, timeout : Time::Span = DEFAULT_TIMEOUT, &handler : Route -> Nil) : Nil
+      @frames_manager.add_route(URLPattern.new(pattern), handler, timeout)
+    end
+
+    # Stops answering requests for this pattern, or for all of them.
+    def unroute(pattern : (String | Regex)? = nil, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+      @frames_manager.remove_routes(pattern.try { |value| URLPattern.new(value) }, timeout)
     end
 
     # A locator for this selector, resolved fresh at every use.
@@ -280,6 +504,15 @@ module Crystalwright
     rescue Error
       # Asked before the frame tree was read.
       [] of ExecutionContext
+    end
+
+    private def receive_within(channel : Channel(T), progress : Progress, what : String) : T forall T
+      select
+      when value = channel.receive
+        value
+      when timeout(progress.remaining)
+        raise progress.timed_out("waiting for #{what}")
+      end
     end
 
     private def watch_dialogs : Nil

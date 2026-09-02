@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head><title>routed</title></head>
+  <body>
+    <div id="items">nothing yet</div>
+    <div id="failure">none</div>
+    <img id="picture" src="/slow?ms=0&type=css" alt="a picture" />
+    <script>
+      window.__load = function () {
+        return fetch("/api/items")
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            document.getElementById("items").textContent = data.items.join(", ");
+          })
+          .catch(function (e) {
+            document.getElementById("failure").textContent = "fetch failed";
+          });
+      };
+    </script>
+  </body>
+</html>
