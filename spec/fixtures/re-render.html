@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <title>re-render</title>
+    <style>#host button { position: absolute; top: 60px; left: 20px; width: 140px; height: 40px; }</style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <div id="result">not clicked</div>
+    <script>
+      // The node is replaced by the act of aiming at it: the first pointer that
+      // arrives triggers a re-render, exactly as a framework would. Any handle
+      // taken before that points at something no longer in the document, so the
+      // first attempt cannot succeed and the selector has to be resolved again.
+      //
+      // Deterministic on purpose. A fixture that swapped on a timer would be a
+      // race, and a race that usually loses is a spec that usually proves
+      // nothing.
+      let swaps = 0;
+
+      function render() {
+        const host = document.getElementById("host");
+        const button = document.createElement("button");
+        button.className = "target";
+        button.textContent = "Replace me";
+
+        if (swaps === 0) {
+          button.addEventListener("pointermove", function () {
+            if (swaps === 0) { swaps = 1; render(); }
+          });
+        }
+
+        button.addEventListener("click", function () {
+          document.getElementById("result").textContent = "clicked after " + swaps + " swaps";
+        });
+
+        host.textContent = "";
+        host.appendChild(button);
+      }
+      render();
+    </script>
+  </body>
+</html>

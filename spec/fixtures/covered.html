@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <title>covered</title>
+    <style>
+      #target { position: absolute; top: 60px; left: 20px; width: 140px; height: 40px; }
+      /* Perfectly visible and completely in the way. Visibility is not the
+         question a hit-target check answers. */
+      #blanket { position: absolute; top: 0; left: 0; width: 400px; height: 300px; opacity: 0; background: red; }
+    </style>
+  </head>
+  <body>
+    <button id="target">Under the blanket</button>
+    <div id="blanket"></div>
+    <div id="result">not clicked</div>
+    <script>
+      document.getElementById("target").addEventListener("click", function () {
+        document.getElementById("result").textContent = "clicked";
+      });
+    </script>
+  </body>
+</html>

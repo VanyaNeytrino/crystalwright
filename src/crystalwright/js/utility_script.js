@@ -423,20 +423,6 @@
     return current;
   }
 
-  // Visible enough to be worth waiting for: it has a box, and it is not
-  // `visibility: hidden`. The rest of what an element has to be before it can
-  // be clicked — stable, enabled, actually on top at the point it will be
-  // clicked — is a separate question and a later one.
-  function isVisible(element) {
-    if (!element || element.nodeType !== 1) return false;
-    const view = element.ownerDocument && element.ownerDocument.defaultView;
-    if (!view) return false;
-    const style = view.getComputedStyle(element);
-    if (!style || style.visibility === "hidden") return false;
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }
-
   // What an element looks like in a failure message. A selector that did not
   // match is debugged by seeing what was there instead.
   function previewNode(node) {
@@ -457,6 +443,404 @@
   }
 
   const clip = (text, limit) => (text.length > limit ? text.slice(0, limit) + "…" : text);
+
+  // --- actionability ---------------------------------------------------------
+  //
+  // Everything an element has to be before it can be acted on, and the check
+  // that the action will land where it was aimed.
+  //
+  // Carried across from Playwright's injected script rather than reasoned out
+  // again. Every constant here — the number of still frames that counts as
+  // stable, the retargeting rules, the shape of the hit-target walk — is the
+  // residue of a bug report somebody already paid for, and a fresh guess would
+  // have to earn its way back to the same place one flake at a time.
+
+  // How many consecutive animation frames an element has to hold still.
+  //
+  // One, which means two frames with the same rectangle: the first records it
+  // and the second confirms it. Chromium's own answer through Playwright's
+  // `rafCountForStablePosition`.
+  const STABLE_FRAMES = 1;
+
+  const CONTINUE_POLLING = Symbol("continuePolling");
+
+  // Which element an action on this node really concerns.
+  //
+  // Clicking the text inside a button means clicking the button; typing into a
+  // label means typing into the control it labels. Without this, a selector
+  // that resolves to a <span> inside a <button> aims at the span's box, which
+  // is usually smaller and sometimes not where the click has to land.
+  function retarget(node, behavior) {
+    let element = node.nodeType === 1 ? node : node.parentElement;
+    if (!element) return null;
+    if (behavior === "none") return element;
+
+    if (!element.matches("input, textarea, select") && !element.isContentEditable) {
+      if (behavior === "button-link") {
+        element = element.closest("button, [role=button], a, [role=link]") || element;
+      } else {
+        element = element.closest("button, [role=button], [role=checkbox], [role=radio]") || element;
+      }
+    }
+
+    if (behavior === "follow-label") {
+      const alreadyControl = element.matches(
+        "a, input, textarea, button, select, [role=link], [role=button], [role=checkbox], [role=radio]"
+      );
+      if (!alreadyControl && !element.isContentEditable) {
+        const label = element.closest("label");
+        if (label && label.control) element = label.control;
+      }
+    }
+    return element;
+  }
+
+  const computedStyle = (element) => {
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    return view ? view.getComputedStyle(element) : null;
+  };
+
+  const visibleTextNode = (node) => {
+    const range = node.ownerDocument.createRange();
+    range.selectNode(node);
+    const rect = range.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  // `display: contents` is the case that makes this more than a rectangle
+  // check: such an element has no box of its own and is visible exactly when
+  // something it contains is.
+  function isVisible(element) {
+    if (!element || element.nodeType !== 1) return false;
+    const style = computedStyle(element);
+    if (!style) return true;
+
+    if (style.display === "contents") {
+      for (let child = element.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 1 && isVisible(child)) return true;
+        if (child.nodeType === 3 && visibleTextNode(child)) return true;
+      }
+      return false;
+    }
+
+    if (Element.prototype.checkVisibility) {
+      if (!element.checkVisibility()) return false;
+    }
+    if (style.visibility !== "visible") return false;
+
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  const NATIVE_CONTROLS = ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "OPTION", "OPTGROUP"];
+
+  // A disabled <fieldset> disables what it contains — except the contents of
+  // its own first <legend>, which stay usable. That exception is in the HTML
+  // specification and is not the kind of thing anybody guesses.
+  function inDisabledFieldset(element) {
+    const fieldset = element.closest("FIELDSET[DISABLED]");
+    if (!fieldset) return false;
+    const legend = fieldset.querySelector(":scope > LEGEND");
+    return !legend || !legend.contains(element);
+  }
+
+  function isDisabled(element) {
+    if (NATIVE_CONTROLS.indexOf(element.tagName.toUpperCase()) === -1) return false;
+    if (element.hasAttribute("disabled")) return true;
+    if (element.tagName.toUpperCase() === "OPTION" && element.closest("OPTGROUP[DISABLED]")) return true;
+    return inDisabledFieldset(element);
+  }
+
+  // Only the native half of the question. Playwright also honours `aria-disabled`
+  // and `aria-readonly` on elements whose ARIA role allows them, which needs the
+  // role computation this shard deliberately does not have yet.
+  function isReadonly(element) {
+    const tag = element.tagName.toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return element.hasAttribute("readonly");
+    if (element.isContentEditable) return false;
+    return "error";
+  }
+
+  function elementState(node, state) {
+    const element = retarget(node, state === "visible" || state === "hidden" ? "none" : "follow-label");
+    if (!element || !element.isConnected) {
+      if (state === "hidden") return { matches: true, received: "hidden" };
+      return { matches: false, received: "error:notconnected" };
+    }
+
+    if (state === "visible" || state === "hidden") {
+      const visible = isVisible(element);
+      return { matches: state === "visible" ? visible : !visible, received: visible ? "visible" : "hidden" };
+    }
+    if (state === "disabled" || state === "enabled") {
+      const disabled = isDisabled(element);
+      return { matches: state === "disabled" ? disabled : !disabled, received: disabled ? "disabled" : "enabled" };
+    }
+    if (state === "editable") {
+      const disabled = isDisabled(element);
+      const readonly = isReadonly(element);
+      if (readonly === "error") {
+        throw new Error(
+          "Element is not an <input>, <textarea>, <select> or [contenteditable], so it cannot be edited."
+        );
+      }
+      return {
+        matches: !disabled && !readonly,
+        received: disabled ? "disabled" : readonly ? "readOnly" : "editable",
+      };
+    }
+    throw new Error("Unexpected element state: " + state);
+  }
+
+  // Holds still for `STABLE_FRAMES` consecutive animation frames.
+  //
+  // Compared frame to frame rather than sampled twice with a delay: an element
+  // that is moving smoothly is caught on the very next frame, and one that is
+  // already at rest costs two frames rather than a fixed wait.
+  function checkElementIsStable(node) {
+    return new Promise((resolve) => {
+      let lastRect = null;
+      let stableFrames = 0;
+      let lastTime = 0;
+
+      const check = () => {
+        const element = retarget(node, "none");
+        if (!element || !element.isConnected) return "error:notconnected";
+
+        const time = performance.now();
+        if (STABLE_FRAMES > 1 && time - lastTime < 15) return CONTINUE_POLLING;
+        lastTime = time;
+
+        const box = element.getBoundingClientRect();
+        const rect = { x: box.left, y: box.top, width: box.width, height: box.height };
+        if (lastRect) {
+          const still =
+            rect.x === lastRect.x && rect.y === lastRect.y &&
+            rect.width === lastRect.width && rect.height === lastRect.height;
+          if (!still) return false;
+          if (++stableFrames >= STABLE_FRAMES) return true;
+        }
+        lastRect = rect;
+        return CONTINUE_POLLING;
+      };
+
+      const frame = () => {
+        const result = check();
+        if (result === CONTINUE_POLLING) requestAnimationFrame(frame);
+        else resolve(result);
+      };
+      requestAnimationFrame(frame);
+    });
+  }
+
+  // Stability first, because it is the one that takes time: an element that is
+  // still moving is not worth asking anything else about yet.
+  async function checkElementStates(node, states) {
+    if (states.indexOf("stable") !== -1) {
+      const stable = await checkElementIsStable(node);
+      if (stable === "error:notconnected") return { notConnected: true };
+      if (stable === false) return { missingState: "stable" };
+    }
+    for (let i = 0; i < states.length; i++) {
+      if (states[i] === "stable") continue;
+      const result = elementState(node, states[i]);
+      if (result.received === "error:notconnected") return { notConnected: true };
+      if (!result.matches) return { missingState: states[i] };
+    }
+    return { done: true };
+  }
+
+  const enclosingShadowRootOrDocument = (element) => {
+    let node = element;
+    while (node.parentNode) node = node.parentNode;
+    return node.nodeType === 11 || node.nodeType === 9 ? node : null;
+  };
+
+  const parentElementOrShadowHost = (element) => {
+    if (element.parentElement) return element.parentElement;
+    if (!element.parentNode) return undefined;
+    if (element.parentNode.nodeType === 11 && element.parentNode.host) return element.parentNode.host;
+    return undefined;
+  };
+
+  // Whether a click at this point would reach the element we mean.
+  //
+  // Not "is the element visible": a transparent overlay is perfectly visible
+  // and still eats the click. The walk descends one shadow root at a time,
+  // because `elementFromPoint` stops at each boundary, and the answer names the
+  // element that got in the way — which is the whole value of it, since
+  // "element is not clickable" without saying what covered it is a message that
+  // sends you to the browser's own devtools anyway.
+  function expectHitTarget(hitPoint, targetElement) {
+    const roots = [];
+    let parentElement = targetElement;
+    while (parentElement) {
+      const root = enclosingShadowRootOrDocument(parentElement);
+      if (!root) break;
+      roots.push(root);
+      if (root.nodeType === 9) break;
+      parentElement = root.host;
+    }
+
+    let hitElement;
+    for (let index = roots.length - 1; index >= 0; index--) {
+      const root = roots[index];
+      const elements = root.elementsFromPoint(hitPoint.x, hitPoint.y);
+      const single = root.elementFromPoint(hitPoint.x, hitPoint.y);
+
+      if (single && elements[0] && parentElementOrShadowHost(single) === elements[0]) {
+        const style = computedStyle(single);
+        if (style && style.display === "contents") elements.unshift(single);
+      }
+      if (elements[0] && elements[0].shadowRoot === root && elements[1] === single) elements.shift();
+
+      const inner = elements[0];
+      if (!inner) break;
+      hitElement = inner;
+      if (index && inner !== roots[index - 1].host) break;
+    }
+
+    const hitParents = [];
+    while (hitElement && hitElement !== targetElement) {
+      hitParents.push(hitElement);
+      hitElement = hitElement.assignedSlot || parentElementOrShadowHost(hitElement);
+    }
+    if (hitElement === targetElement) return { done: true };
+
+    const description = previewNode(hitParents[0] || document.documentElement);
+
+    // The topmost thing in the way that is not also an ancestor of the target —
+    // a dialog overlaying the page, rather than the particular <div> inside it
+    // that happened to be under the cursor.
+    let rootDescription;
+    let element = targetElement;
+    while (element) {
+      const index = hitParents.indexOf(element);
+      if (index !== -1) {
+        if (index > 1) rootDescription = previewNode(hitParents[index - 1]);
+        break;
+      }
+      element = parentElementOrShadowHost(element);
+    }
+
+    return {
+      hitTargetDescription: rootDescription ? description + " from " + rootDescription + " subtree" : description,
+    };
+  }
+
+  const MOUSE_EVENTS = ["mousedown", "mouseup", "pointerdown", "pointerup", "click", "auxclick", "dblclick", "contextmenu"];
+  const HOVER_EVENTS = ["mousemove", "pointermove"];
+
+  // Watches the events an action is about to produce and checks, for each one,
+  // that the point it landed on still belongs to the element.
+  //
+  // The check before the click answers "is it clear now". This answers "was it
+  // still clear when the event actually arrived", which is a different question
+  // on a page whose layout is moving: there is a gap between aiming and firing,
+  // and a banner sliding in during that gap is the classic way a passing suite
+  // starts clicking the wrong thing once a week.
+  function setupHitTargetInterceptor(node, action, hitPoint) {
+    const element = retarget(node, "button-link");
+    if (!element || !element.isConnected) return "error:notconnected";
+
+    if (hitPoint) {
+      const preliminary = expectHitTarget(hitPoint, element);
+      if (!preliminary.done) return preliminary.hitTargetDescription;
+    }
+
+    const watched = action === "hover" ? HOVER_EVENTS : MOUSE_EVENTS;
+    let outcome;
+
+    const listener = (event) => {
+      if (watched.indexOf(event.type) === -1) return;
+      if (outcome === undefined && typeof event.clientX === "number") {
+        outcome = expectHitTarget({ x: event.clientX, y: event.clientY }, element);
+      }
+      if (outcome && !outcome.done) {
+        // Something got in the way between aiming and firing. The event is
+        // stopped rather than allowed through, because a click that lands on
+        // the wrong element is worse than one that does not land at all.
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    const all = MOUSE_EVENTS.concat(HOVER_EVENTS);
+    for (let i = 0; i < all.length; i++) window.addEventListener(all[i], listener, true);
+
+    return {
+      stop: () => {
+        for (let i = 0; i < all.length; i++) window.removeEventListener(all[i], listener, true);
+        if (!outcome || outcome.done) return { done: true };
+        return outcome;
+      },
+    };
+  }
+
+  // Live interceptors, keyed by a token the caller made up.
+  //
+  // Not one slot: two fibers driving one page is an ordinary thing to do, and a
+  // single slot would have the second action tear down the first one's
+  // interceptor and then read its answer.
+  const interceptors = new Map();
+
+  // Clears an input and puts a value in it, the way a person would rather than
+  // by assignment: `value = x` sets the property without any of the events a
+  // framework listens for, so React and friends never learn the field changed.
+  function fillNode(node, value) {
+    const element = retarget(node, "follow-label");
+    if (!element || !element.isConnected) return "error:notconnected";
+
+    const state = elementState(element, "editable");
+    if (!state.matches) return { missingState: "editable" };
+
+    if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+      const type = (element.getAttribute("type") || "text").toLowerCase();
+      element.focus();
+      element.selectionStart = 0;
+      element.selectionEnd = element.value.length;
+      // Reported as an empty field first, so that a listener sees the clear and
+      // the fill as separate events, which is what typing looks like.
+      if (element.value !== "") {
+        element.value = "";
+        element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      }
+      return { needsTyping: true, type: type };
+    }
+
+    if (element.isContentEditable) {
+      element.focus();
+      const selection = document.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return { needsTyping: true, type: "contenteditable" };
+    }
+
+    if (element.tagName === "SELECT") {
+      return { missingState: "editable" };
+    }
+
+    return { missingState: "editable" };
+  }
+
+  function scrollNodeIntoView(node, options) {
+    const element = retarget(node, "none");
+    if (!element || !element.isConnected) return "error:notconnected";
+    if (options) element.scrollIntoView(options);
+    return { done: true };
+  }
+
+  function nodeValue(node) {
+    const element = retarget(node, "follow-label");
+    if (!element) return null;
+    if (element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.tagName === "SELECT") {
+      return element.value;
+    }
+    return element.isContentEditable ? element.textContent : null;
+  }
 
   // What Crystal can ask for by name. Arguments arrive through the same tagged
   // format `evaluate` uses, so an element is a handle and a selector is a
@@ -480,6 +864,35 @@
       if (state === "hidden") return { found: !element || !isVisible(element) };
       throw new Error("Unknown selector state: " + state);
     },
+
+    checkStates: (element, states) => checkElementStates(element, states),
+    elementState: (element, state) => elementState(element, state),
+    expectHitTarget: (element, x, y) => expectHitTarget({ x: x, y: y }, retarget(element, "button-link")),
+
+    interceptHitTarget: (element, action, x, y, token) => {
+      const installed = setupHitTargetInterceptor(element, action, { x: x, y: y });
+      if (installed === "error:notconnected") return { notConnected: true };
+      if (typeof installed === "string") return { hitTargetDescription: installed };
+      interceptors.set(token, installed);
+      return { done: true };
+    },
+
+    stopInterception: (token) => {
+      const installed = interceptors.get(token);
+      if (!installed) return { done: true };
+      interceptors.delete(token);
+      return installed.stop();
+    },
+    scrollIntoView: (element, options) => scrollNodeIntoView(element, options),
+    prepareFill: (element, value) => fillNode(element, value),
+    value: (element) => nodeValue(element),
+    focus: (element) => {
+      const target = retarget(element, "follow-label");
+      if (!target || !target.isConnected) return "error:notconnected";
+      target.focus();
+      return { done: true };
+    },
+    viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
   };
 
 
@@ -527,7 +940,15 @@
 
       const fn = api[name];
       if (!fn) throw new Error("No such utility function: " + name);
-      return finish(fn.apply(null, args), payload.r);
+
+      // Some of these wait for the page — stability is measured across
+      // animation frames — so a promise is a normal answer here, not an
+      // accident of one function.
+      const result = fn.apply(null, args);
+      if (result && typeof result.then === "function") {
+        return result.then((resolved) => finish(resolved, payload.r));
+      }
+      return finish(result, payload.r);
     },
   };
 })()

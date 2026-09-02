@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <title>moving</title>
+    <style>
+      #target {
+        position: absolute; top: 60px; left: 0;
+        width: 140px; height: 40px;
+        /* Finite on purpose. An element that never stops is a different test —
+           the action should fail — and this one is about a click landing once
+           the element settles. */
+        animation: slide 900ms ease-out 1 forwards;
+      }
+      @keyframes slide { from { left: 0; } to { left: 260px; } }
+    </style>
+  </head>
+  <body>
+    <button id="target">Moving</button>
+    <div id="result">not clicked</div>
+    <script>
+      // Records where the click landed relative to the button, so a click that
+      // hit the button's old position cannot pass.
+      document.getElementById("target").addEventListener("click", function (e) {
+        const box = this.getBoundingClientRect();
+        const inside = e.clientX >= box.left && e.clientX <= box.right &&
+                       e.clientY >= box.top && e.clientY <= box.bottom;
+        document.getElementById("result").textContent = inside ? "hit" : "missed";
+      });
+    </script>
+  </body>
+</html>

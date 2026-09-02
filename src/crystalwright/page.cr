@@ -88,6 +88,45 @@ module Crystalwright
       @frames_manager.with_signals(progress) { yield }
     end
 
+    # The mouse, in page coordinates.
+    #
+    # Low level: it goes where it is told and checks nothing. `click` is what
+    # you almost always want instead.
+    def mouse : Mouse
+      @frames_manager.mouse
+    end
+
+    # The keyboard.
+    def keyboard : Keyboard
+      @frames_manager.keyboard
+    end
+
+    # Clicks the first element matching the selector.
+    #
+    # Waits for it to be visible, enabled and holding still, scrolls it into
+    # view, aims at the middle of what is actually on screen, checks nothing is
+    # on top of it, and keeps checking while the events are in flight. Retries
+    # all of that until it works or the deadline passes.
+    def click(selector : String, button : MouseButton = MouseButton::Left, click_count : Int32 = 1,
+              force : Bool = false, timeout : Time::Span? = nil) : Nil
+      main_frame.click(selector, button, click_count, force, timeout)
+    end
+
+    # Moves the pointer over the first element matching the selector.
+    def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil) : Nil
+      main_frame.hover(selector, force, timeout)
+    end
+
+    # Replaces the contents of an input, textarea or contenteditable.
+    def fill(selector : String, value : String, timeout : Time::Span? = nil) : Nil
+      main_frame.fill(selector, value, timeout)
+    end
+
+    # Focuses the first element matching the selector and presses one key.
+    def press(selector : String, key : String, timeout : Time::Span? = nil) : Nil
+      main_frame.press(selector, key, timeout)
+    end
+
     # The first element in the page matching the selector, or `nil`.
     #
     # Selectors are `css=`, `text=`, `xpath=`, `id=` and `data-testid=`, chained

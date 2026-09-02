@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <title>detach on hover</title>
+    <style>#target { position: absolute; top: 60px; left: 20px; width: 140px; height: 40px; }</style>
+  </head>
+  <body>
+    <button id="target">Vanishes</button>
+    <div id="result">still here</div>
+    <script>
+      // Removes itself the moment the pointer arrives, so every attempt finds
+      // the element and then loses it. The action has to give up with something
+      // a person can read rather than hang.
+      document.getElementById("target").addEventListener("mouseover", function () {
+        this.remove();
+        document.getElementById("result").textContent = "gone";
+      });
+    </script>
+  </body>
+</html>

@@ -3,6 +3,7 @@ require "./errors"
 require "./lifecycle"
 require "./frame"
 require "./signal_barrier"
+require "./input"
 require "./progress"
 
 module Crystalwright
@@ -24,6 +25,12 @@ module Crystalwright
     # The name of this page's isolated world.
     getter utility_world_name : String
 
+    # The mouse, in page coordinates.
+    getter mouse : Mouse
+
+    # The keyboard.
+    getter keyboard : Keyboard
+
     # The shortest a waiter will sleep, so a recheck deadline of zero cannot
     # turn a wait into a spin.
     MINIMUM_SLICE = 1.millisecond
@@ -37,6 +44,8 @@ module Crystalwright
 
     # :nodoc:
     def initialize(@session : CDP::Session, @utility_world_name : String)
+      @mouse = Mouse.new(@session)
+      @keyboard = Keyboard.new(@session)
     end
 
     # The page's top frame.

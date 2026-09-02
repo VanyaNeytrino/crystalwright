@@ -9,10 +9,10 @@ command and event Chrome knows about — and this shard is the part with opinion
 JavaScript worlds, handles to live values, and eventually locators and
 auto-waiting actions. No Node.js, no driver process, one static binary.
 
-Status: **early**. Execution contexts, handles and `evaluate` work, including
-the parts of JavaScript that JSON cannot express; so do the frame tree,
-navigation and waiting for a page to settle. Selectors and the auto-waiting
-actions are not written yet.
+Status: **usable, and not finished**. Navigation, frames, selectors and the
+auto-waiting actions all work — `click`, `fill`, `hover` and `press` wait for an
+element to be ready, refuse to click something covered, and retry until they can.
+Locators, assertions, network interception and screenshots are not written yet.
 
 ```crystal
 require "crystalwright"
@@ -24,6 +24,41 @@ Crystalwright.launch do |browser|
   end
 end
 ```
+
+## Actions that wait
+
+A click is not a click. It waits for the element to be visible, enabled and
+holding still; scrolls it into view, and if that parks it under a sticky header,
+scrolls differently; aims at the middle of what is actually on the screen rather
+than the middle of its bounding box; checks nothing is on top of it; and keeps
+checking while the events are in flight, because a banner sliding in between
+aiming and firing is the classic way a passing suite starts clicking the wrong
+thing once a week.
+
+```crystal
+page.click("#submit")
+page.fill("#email", "someone@example.com")
+page.hover("text=Account")
+page.press("#search", "Enter")
+```
+
+All of that is retried until it works or the deadline passes, and there is one
+deadline for the whole action rather than one per attempt — so a click that
+tried eleven times fails after the thirty seconds you asked for, not after
+eleven times thirty. When it fails it prints what it tried:
+
+```
+click #target timed out after 1.0s
+attempting click on #target
+  waiting for the element to be visible, enabled, stable
+  scrolling into view if needed
+  aiming at (90.0, 80.0)
+  <div id="blanket"></div> intercepts pointer events
+retrying click on #target, attempt #2
+  ...
+```
+
+`force: true` skips the checks when you mean to click whatever is there.
 
 ## Navigation
 
@@ -79,6 +114,26 @@ valid across navigations, and the handles resolved in it do not. A frame that is
 removed from the page raises `Crystalwright::FrameDetachedError` rather than
 waiting out its timeout, because a frame that is gone is never getting another
 document.
+
+## Selectors
+
+```crystal
+page.click("#submit")                        # css by default
+page.click("text=Save changes")              # case-insensitive substring
+page.click(%(text="Save changes"))           # exact
+page.click("text=/^Save/")                   # a regular expression
+page.click("//button[@type='submit']")       # xpath, implied by the slashes
+page.click("data-testid=save")
+page.click("#dialog >> text=Confirm")        # chained: search inside what came before
+```
+
+`css=` looks inside open shadow roots; `css:light=` stays in the light DOM.
+Closed shadow roots are unreachable — not a decision, a property of the
+platform.
+
+Everything here runs in an isolated JavaScript world, so a page that reassigns
+`document.querySelector` or `Element.prototype.getBoundingClientRect` breaks its
+own world and reaches nothing of ours.
 
 ## Values, not JSON
 

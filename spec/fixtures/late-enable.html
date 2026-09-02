@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head><title>late enable</title></head>
+  <body>
+    <button id="target" disabled>Not yet</button>
+    <div id="result">not clicked</div>
+    <script>
+      document.getElementById("target").addEventListener("click", function () {
+        document.getElementById("result").textContent = "clicked";
+      });
+      setTimeout(function () {
+        document.getElementById("target").removeAttribute("disabled");
+      }, 300);
+    </script>
+  </body>
+</html>

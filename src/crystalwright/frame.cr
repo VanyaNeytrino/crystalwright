@@ -230,6 +230,179 @@ module Crystalwright
       end
     end
 
+    # ---- actions -------------------------------------------------------------
+    #
+    # An action is three nested loops, and every one of them earns its place.
+    #
+    # The outer one resolves the selector again, because a framework that
+    # re-renders between resolving and clicking leaves a handle pointing at a
+    # node no longer in the document. The middle one retries the attempt itself
+    # with a longer pause and a different scroll anchoring each time, because
+    # "not stable yet" and "parked under a header" are both fixed by trying
+    # again differently. The inner one lives in the page and counts animation
+    # frames, because that is the only place the question "has it stopped
+    # moving" can be asked.
+    #
+    # None of the three has its own clock. One deadline covers the lot, which is
+    # what makes a click that failed twelve times fail after the timeout the
+    # caller asked for rather than after twelve of them.
+
+    # Clicks the first element matching the selector.
+    #
+    # Waits for it to be visible, enabled and holding still, scrolls it into
+    # view, aims at the middle of what is actually on screen, checks nothing is
+    # on top of it, and keeps checking while the events are in flight.
+    def click(selector : String, button : MouseButton = MouseButton::Left, click_count : Int32 = 1,
+              force : Bool = false, timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("click #{selector}", timeout || DEFAULT_TIMEOUT)
+      pointer_action(selector, "click", progress, wait_for_enabled: true, force: force) do |point|
+        @manager.mouse.click(point, button, click_count, progress: progress)
+      end
+    end
+
+    # Moves the pointer over the first element matching the selector.
+    #
+    # Does not wait for it to be enabled: hovering a disabled control is a
+    # perfectly ordinary thing to want, since that is often what shows the
+    # tooltip explaining why it is disabled.
+    def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("hover #{selector}", timeout || DEFAULT_TIMEOUT)
+      pointer_action(selector, "hover", progress, wait_for_enabled: false, force: force) do |point|
+        @manager.mouse.move(point.x, point.y, progress)
+      end
+    end
+
+    # Replaces the contents of an input, textarea or contenteditable.
+    #
+    # Not a pointer action: there is no point to aim at and nothing to be
+    # covered by, so it neither scrolls nor checks a hit target. It does clear
+    # the field and enter the text through real input events, because a page
+    # that listens for `input` — which is every page built on a framework —
+    # never learns about a value assigned directly.
+    def fill(selector : String, value : String, timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("fill #{selector}", timeout || DEFAULT_TIMEOUT)
+
+      retry_action(progress, "fill #{selector}") do |_|
+        element = resolve(selector, progress)
+        next ActionOutcome.new(ActionFailure::NotConnected) unless element
+
+        begin
+          outcome = element.check_states(["visible", "enabled", "editable"], progress)
+          next outcome unless outcome.done?
+
+          outcome = element.prepare_fill(value, progress)
+          next outcome unless outcome.done?
+
+          @manager.with_signals(progress) { @manager.keyboard.type(value, progress) }
+          ActionOutcome.done
+        ensure
+          element.dispose
+        end
+      end
+    end
+
+    # Focuses the first element matching the selector and presses one key.
+    def press(selector : String, key : String, timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("press #{key} on #{selector}", timeout || DEFAULT_TIMEOUT)
+
+      retry_action(progress, "press #{key} on #{selector}") do |_|
+        element = resolve(selector, progress)
+        next ActionOutcome.new(ActionFailure::NotConnected) unless element
+
+        begin
+          outcome = element.check_states(["visible", "enabled"], progress)
+          next outcome unless outcome.done?
+
+          outcome = element.focus(progress)
+          next outcome unless outcome.done?
+
+          @manager.with_signals(progress) { @manager.keyboard.press(key, progress) }
+          ActionOutcome.done
+        ensure
+          element.dispose
+        end
+      end
+    end
+
+    private def pointer_action(selector : String, name : String, progress : Progress,
+                               wait_for_enabled : Bool, force : Bool, &action : Point -> Nil) : Nil
+      retry_action(progress, "#{name} on #{selector}") do |attempt|
+        element = resolve(selector, progress)
+        next ActionOutcome.new(ActionFailure::NotConnected) unless element
+
+        begin
+          attempt_pointer(element, name, progress, attempt, wait_for_enabled, force, action)
+        ensure
+          element.dispose
+        end
+      end
+    end
+
+    private def attempt_pointer(element : ElementHandle, name : String, progress : Progress, attempt : Int32,
+                                wait_for_enabled : Bool, force : Bool, action : Point -> Nil) : ActionOutcome
+      alignment = SCROLL_ALIGNMENTS[attempt % SCROLL_ALIGNMENTS.size]
+
+      unless force
+        states = wait_for_enabled ? ["visible", "enabled", "stable"] : ["visible", "stable"]
+        progress.log("  waiting for the element to be #{states.join(", ")}")
+        outcome = element.check_states(states, progress)
+        return outcome unless outcome.done?
+      end
+
+      progress.log(alignment ? "  scrolling into view, anchored to #{alignment}" : "  scrolling into view if needed")
+      outcome = element.scroll_into_view(alignment, progress)
+      return outcome unless outcome.done?
+
+      aimed = element.clickable_point(progress)
+      return aimed if aimed.is_a?(ActionOutcome)
+      progress.log("  aiming at #{aimed}")
+
+      token = Random::Secure.hex(6)
+      unless force
+        outcome = element.intercept_hit_target(name, aimed, token, progress)
+        return outcome unless outcome.done?
+      end
+
+      begin
+        # Inside the barrier, so that a click which navigates does not return
+        # before the new document has committed.
+        @manager.with_signals(progress) { action.call(aimed) }
+      rescue error
+        element.stop_intercepting(token, progress) unless force
+        raise error
+      end
+
+      # Asked after the event rather than only before it. The gap between aiming
+      # and the page handling the click is where a banner sliding in changes the
+      # answer, and that gap is exactly what makes this class of bug rare enough
+      # to be blamed on the machine.
+      force ? ActionOutcome.done : element.stop_intercepting(token, progress)
+    end
+
+    # The middle loop: try, wait a little longer, try again, until the deadline.
+    private def retry_action(progress : Progress, what : String, &attempt : Int32 -> ActionOutcome) : Nil
+      tries = 0
+      loop do
+        if tries.zero?
+          progress.log("attempting #{what}")
+        else
+          progress.log("retrying #{what}, attempt ##{tries + 1}")
+          delay = RETRY_DELAYS[Math.min(tries - 1, RETRY_DELAYS.size - 1)]
+          unless delay.zero?
+            progress.log("  waiting #{delay.total_milliseconds.to_i}ms")
+            sleep({delay, progress.remaining}.min)
+          end
+        end
+
+        progress.check!
+        check_attached!
+        outcome = attempt.call(tries)
+        tries += 1
+        return if outcome.done?
+        progress.log("  #{outcome}")
+      end
+    end
+
     # This frame's own JavaScript world, waiting for it if a navigation is in flight.
     def main_world(progress : Progress) : ExecutionContext
       await_context(progress, "the main world of #{describe}", ->(context : ExecutionContext) { context.name.empty? })

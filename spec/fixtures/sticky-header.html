@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <title>sticky header</title>
+    <style>
+      body { margin: 0; }
+      #header { position: fixed; top: 0; left: 0; right: 0; height: 90px; background: #ccd; z-index: 10; }
+      .filler { height: 1400px; }
+      #target { display: block; width: 160px; height: 36px; }
+    </style>
+  </head>
+  <body>
+    <div id="header">a header that stays put</div>
+    <div class="filler"></div>
+    <button id="target">Under the header</button>
+    <div class="filler"></div>
+    <div id="result">not clicked</div>
+    <script>
+      document.getElementById("target").addEventListener("click", function () {
+        document.getElementById("result").textContent = "clicked";
+      });
+
+      // Parked so the button sits *inside* the viewport and *under* the header.
+      //
+      // This is what makes the fixture test what it claims, and it took two
+      // tries to get right. Scrolling the button off screen does not work:
+      // Chrome's own scrollIntoViewIfNeeded centres anything far out of view,
+      // which clears the header by accident and lets the fixture pass with no
+      // rotation at all. Geometrically the button is already visible here — the
+      // header is merely painted over it — so the built-in scroll does nothing,
+      // and only an explicit anchoring moves it into the open.
+      const target = document.getElementById("target");
+      window.scrollTo(0, target.offsetTop - 40);
+    </script>
+  </body>
+</html>
