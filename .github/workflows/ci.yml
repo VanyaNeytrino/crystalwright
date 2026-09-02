@@ -46,11 +46,19 @@ jobs:
   # Specs that drive a real browser. Run ten times: an integration test that
   # fails one time in ten is a bug that has been found, not a test that needs a
   # retry.
+  #
+  # The `parallel` job above cannot cover the frame tree, because a frame tree
+  # only exists when a browser does. So one leg of this matrix turns the
+  # runtime's parallelism on: `FrameManager` is the largest piece of shared
+  # mutable state in the shard, every one of its handlers runs on the protocol's
+  # event fiber while callers wait on other fibers, and the default parallelism
+  # of one means none of that is ever really concurrent.
   integration:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        parallelism: ["1", "8"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +79,7 @@ jobs:
       - name: Run the browser specs ten times
         env:
           CDP_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CRYSTALWRIGHT_SPEC_PARALLEL: ${{ matrix.parallelism }}
         run: |
           for attempt in $(seq 1 10); do
             echo "::group::attempt $attempt"

@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <head><title>late iframe</title></head>
+  <body>
+    waiting
+    <script>
+      // One state change, arriving late enough that everything watching for it
+      // is genuinely asleep by the time it does.
+      setTimeout(function () {
+        var f = document.createElement("iframe");
+        f.name = "late";
+        f.src = "/frame-inner.html";
+        document.body.appendChild(f);
+      }, 400);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head><title>never idle</title></head>
+  <body>
+    polling forever
+    <script>
+      // Every 100 ms, so the in-flight count keeps reaching zero and never
+      // stays there for the 500 ms that counts as quiet. Slow enough that a
+      // few seconds of specs stay far inside the protocol's event queue.
+      setInterval(function () {
+        fetch("/poll").then(function (r) { return r.text(); });
+      }, 100);
+    </script>
+  </body>
+</html>

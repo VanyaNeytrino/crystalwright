@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <head><title>spa</title></head>
+  <body>
+    <div id="view">start</div>
+    <script>
+      // No lifecycle event of any kind follows a pushState, and the loaderId
+      // does not change: measured, and the reason this fixture exists.
+      window.__pushes = 0;
+      window.__go = function (path) {
+        history.pushState({}, "", path);
+        document.getElementById("view").textContent = path;
+        window.__pushes++;
+      };
+    </script>
+  </body>
+</html>

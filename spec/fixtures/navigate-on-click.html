@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+  <head><title>before</title></head>
+  <body>
+    <!-- The destination takes 300 ms to answer on purpose. A click that
+         navigates to something instant commits before anyone could observe the
+         difference, so removing the barrier would leave the spec green. -->
+    <a id="go" href="/slow?ms=300&type=html&title=arrived">go</a>
+  </body>
+</html>

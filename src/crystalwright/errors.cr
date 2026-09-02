@@ -39,6 +39,20 @@ module Crystalwright
     end
   end
 
+  # The frame this call belongs to has been removed from the page.
+  #
+  # Its own type rather than a timeout, because the two mean opposite things to
+  # a caller: a timeout says "not yet, and I gave up", and this says "never
+  # again, stop waiting". A frame that has been detached will never get another
+  # execution context, so anything waiting for one is waiting for good.
+  class FrameDetachedError < Error
+    def initialize(what : String = "the frame")
+      super("#{what} was detached from the page. A frame that has been removed \
+             never gets another document, so nothing resolved in it can be \
+             retried.")
+    end
+  end
+
   # A value could not be moved across the JavaScript boundary.
   class SerializationError < Error
   end

@@ -422,12 +422,3 @@ end
 private def dialog_fixtures
   {"/alert" => "<html><head><title>alert</title></head><body>ready</body></html>"}
 end
-
-# Opens a browser and one tab, and always closes both.
-private def with_page(&)
-  Crystalwright.launch do |browser|
-    browser.new_page do |page|
-      yield page
-    end
-  end
-end

@@ -10,8 +10,9 @@ JavaScript worlds, handles to live values, and eventually locators and
 auto-waiting actions. No Node.js, no driver process, one static binary.
 
 Status: **early**. Execution contexts, handles and `evaluate` work, including
-the parts of JavaScript that JSON cannot express. Frames, selectors and the
-auto-waiting actions are not written yet.
+the parts of JavaScript that JSON cannot express; so do the frame tree,
+navigation and waiting for a page to settle. Selectors and the auto-waiting
+actions are not written yet.
 
 ```crystal
 require "crystalwright"
@@ -23,6 +24,61 @@ Crystalwright.launch do |browser|
   end
 end
 ```
+
+## Navigation
+
+`goto` waits for the document it asked for, and then for however far into
+loading you want to be:
+
+```crystal
+page.goto("https://example.com")                                    # the load event
+page.goto("https://example.com", Crystalwright::LoadState::NetworkIdle)
+page.wait_for_load_state(Crystalwright::LoadState::DOMContentLoaded)
+```
+
+`NetworkIdle` means 500 ms with nothing in flight. It is this library's own
+rule rather than Chrome's `networkIdle` lifecycle event, which means something
+else: measured on a page whose last resource arrives 600 ms in, Chrome announces
+idle about 1.3 seconds after that, and the gap varies between runs on the same
+page.
+
+A navigation that does not replace the document — `history.pushState`, or a
+fragment — is still a navigation. The address changes, the document does not,
+and `wait_for_load_state` returns straight away rather than waiting for a `load`
+event that already fired and is not coming back. Single-page applications work
+without being a special case.
+
+An action that navigates can be held open until it has:
+
+```crystal
+page.with_navigation_signals do
+  page.evaluate("() => document.querySelector('a#next').click()")
+end
+# the new document has committed; the next call is not racing it
+```
+
+## Frames
+
+Every frame has the same API the page does, because `Page` is a thin facade
+over its main frame — `page.goto` and `page.main_frame.goto` are the same call.
+
+```crystal
+page.goto("https://example.com/with-an-iframe")
+
+page.frames                                  # every frame, parents first
+inner = page.frame("checkout")               # by name or id attribute
+inner.url
+inner.parent                                 # => page.main_frame
+inner.evaluate(String, "() => document.title")
+inner.wait_for_load_state
+```
+
+A frame keeps its identity for as long as its element exists, while what it is
+*showing* is replaced on every navigation — so a `Frame` you are holding stays
+valid across navigations, and the handles resolved in it do not. A frame that is
+removed from the page raises `Crystalwright::FrameDetachedError` rather than
+waiting out its timeout, because a frame that is gone is never getting another
+document.
 
 ## Values, not JSON
 
@@ -124,6 +180,10 @@ crystal spec --tag "~integration"   # no browser
 crystal spec                        # everything, needs Chrome
 crystal tool format --check && ./bin/ameba
 node --check src/crystalwright/js/utility_script.js
+
+# Crystal 1.21 runs fibers at a parallelism of one unless told otherwise, so
+# this is the only run that can fail on a data race.
+CRYSTALWRIGHT_SPEC_PARALLEL=8 crystal spec
 ```
 
 The specs that drive a browser are tagged `integration` and CI runs them ten
