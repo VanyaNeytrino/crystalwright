@@ -9,10 +9,9 @@ command and event Chrome knows about — and this shard is the part with opinion
 JavaScript worlds, handles to live values, and eventually locators and
 auto-waiting actions. No Node.js, no driver process, one static binary.
 
-Status: **usable, and not finished**. Navigation, frames, selectors and the
-auto-waiting actions all work — `click`, `fill`, `hover` and `press` wait for an
-element to be ready, refuse to click something covered, and retry until they can.
-Locators, assertions, network interception and screenshots are not written yet.
+Status: **usable, and not finished**. Navigation, frames, selectors, locators,
+the auto-waiting actions and assertions that wait all work. Network
+interception, screenshots, cookies, downloads and popups are not written yet.
 
 ```crystal
 require "crystalwright"
@@ -114,6 +113,50 @@ valid across navigations, and the handles resolved in it do not. A frame that is
 removed from the page raises `Crystalwright::FrameDetachedError` rather than
 waiting out its timeout, because a frame that is gone is never getting another
 document.
+
+## Locators
+
+A locator names elements. It holds no reference to anything, so there is nothing
+to go stale: it is a question, asked again at every use.
+
+```crystal
+page.locator("#submit").click
+page.get_by_text("Save changes").click
+page.get_by_label("Email").fill("someone@example.com")
+page.get_by_test_id("row").filter(has_text: "Ada").locator("button").click
+page.locator(".row").first.text_content
+```
+
+Locators are **strict**: one that matches two elements is an error, not a silent
+choice of the first — because "the first thing that matched" is exactly what
+turns a renamed button into a test that passes while clicking the wrong control.
+The error shows what matched:
+
+```
+strict mode violation: button.remove resolved to 3 elements:
+  1) <button class="remove">Delete</button>
+  2) <button class="remove">Delete</button>
+  3) <button class="remove">Delete</button>
+
+Use .nth(), .first or .last to say which one, or narrow the selector.
+```
+
+`filter` narrows the set; chaining searches inside it. `locator("li")
+.locator("text=Delete")` names the button, `locator("li").filter(has_text:
+"Delete")` names the row.
+
+## Assertions that wait
+
+```crystal
+Crystalwright.expect(page.locator("#status")).to_have_text("Saved")
+Crystalwright.expect(page.get_by_text("Error")).not.to_be_visible
+Crystalwright.expect(page.locator(".row")).to_have_count(3)
+```
+
+Each asks, and keeps asking until the answer is the one wanted or the deadline
+passes — the only shape that works against a page, where every answer is about a
+moment and the interesting moment is usually a few frames away. When one gives
+up it prints what was actually there, not merely that the check failed.
 
 ## Selectors
 

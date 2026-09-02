@@ -53,8 +53,25 @@ module Crystalwright
     end
   end
 
+  # A locator named more than one element.
+  #
+  # Its own type because it is not a timeout and not a missing element: both of
+  # those mean "not yet" and are worth retrying, while this one will be just as
+  # true in thirty seconds. The message carries a preview of what matched, since
+  # the fix is always to say which one was meant.
+  class StrictModeError < Error
+  end
+
   # A value could not be moved across the JavaScript boundary.
   class SerializationError < Error
+  end
+
+  # An `expect` never came true.
+  #
+  # Carries what was actually there when the deadline passed, not merely that
+  # the check failed. A test that says "expected visible" and stops has told you
+  # the thing you already knew.
+  class AssertionError < Error
   end
 
   # An operation ran out of its deadline.

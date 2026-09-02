@@ -261,7 +261,7 @@
       const name = step.slice(0, eq).trim();
       // Only a name that is actually an engine counts, so `[href="x"]` and
       // `css=div[a=b]` both mean what they look like.
-      if (ENGINES[name]) return { engine: name, body: step.slice(eq + 1).trim() };
+      if (ENGINES[name] || FILTERS[name]) return { engine: name, body: step.slice(eq + 1).trim() };
     }
     if (step.slice(0, 2) === "//" || step.slice(0, 2) === "..") return { engine: "xpath", body: step };
     return { engine: "css", body: step };
@@ -301,13 +301,26 @@
     return found;
   }
 
-  // `text=Sign in`   case-insensitive substring, whitespace collapsed
-  // `text="Sign in"` exact after collapsing, case sensitive
-  // `text=/^Sign/i`  regular expression
+  // `text=Sign in`    case-insensitive substring, whitespace collapsed
+  // `text="Sign in"`  exact after collapsing, case sensitive
+  // `text="Sign in"i` case-insensitive substring, same as the bare form
+  // `text=/^Sign/i`   regular expression
+  //
+  // The quoted-with-`i` form exists so that a `Locator` can quote everything it
+  // emits. An unquoted body is fine when a person writes it and dangerous when
+  // a builder does: the first `>>` inside the text would be read as a step
+  // separator, and the first quote as the start of one.
   function textMatcher(body) {
-    if (body.length > 1 && body[0] === '"' && body[body.length - 1] === '"') {
-      const literal = normalizeText(JSON.parse(body));
-      return (text) => text === literal;
+    if (body.length > 1 && body[0] === '"') {
+      const end = body.lastIndexOf('"');
+      if (end > 0) {
+        const literal = normalizeText(JSON.parse(body.slice(0, end + 1)));
+        if (body.slice(end + 1).indexOf("i") !== -1) {
+          const needle = literal.toLowerCase();
+          return (text) => text.toLowerCase().indexOf(needle) !== -1;
+        }
+        return (text) => text === literal;
+      }
     }
     if (body.length > 2 && body[0] === "/") {
       const end = body.lastIndexOf("/");
@@ -383,44 +396,156 @@
 
   const cssQuote = (value) => '"' + String(value).replace(/(["\\])/g, "\\$1") + '"';
 
+  // Elements carrying an attribute whose text matches — `placeholder=`, `alt=`,
+  // `title=`. One shape covers all three, because the only thing that differs
+  // is which attribute is read.
+  const attributeEngine = (attribute) => (root, body, all) => {
+    const matches = textMatcher(body);
+    const found = [];
+    const scopes = scopesUnder(root);
+    for (let s = 0; s < scopes.length; s++) {
+      const candidates = scopes[s].querySelectorAll("[" + attribute + "]");
+      for (let i = 0; i < candidates.length; i++) {
+        if (!matches(normalizeText(candidates[i].getAttribute(attribute)))) continue;
+        found.push(candidates[i]);
+        if (!all) return found;
+      }
+    }
+    return found;
+  };
+
+  // The control a label names, not the label itself.
+  //
+  // `label.control` is the platform's own answer and covers both spellings —
+  // `<label for=...>` and a control nested inside the label — which is not
+  // something worth reimplementing from the HTML specification by hand.
+  // `aria-label` is included because for a control with no visible label it is
+  // the only name there is.
+  function queryLabel(root, body, all) {
+    const matches = textMatcher(body);
+    const found = [];
+    const scopes = scopesUnder(root);
+
+    for (let s = 0; s < scopes.length; s++) {
+      const labels = scopes[s].querySelectorAll("label");
+      for (let i = 0; i < labels.length; i++) {
+        if (!matches(normalizeText(labels[i].textContent))) continue;
+        const control = labels[i].control;
+        if (!control) continue;
+        found.push(control);
+        if (!all) return found;
+      }
+
+      const labelled = scopes[s].querySelectorAll("[aria-label]");
+      for (let i = 0; i < labelled.length; i++) {
+        if (!matches(normalizeText(labelled[i].getAttribute("aria-label")))) continue;
+        if (found.indexOf(labelled[i]) !== -1) continue;
+        found.push(labelled[i]);
+        if (!all) return found;
+      }
+    }
+    return found;
+  }
+
   const ENGINES = {
     css: (root, body, all) => queryCSS(root, body, true, all),
     "css:light": (root, body, all) => queryCSS(root, body, false, all),
     text: (root, body, all) => queryText(root, body, all),
     xpath: (root, body, all) => queryXPath(root, body, all),
     id: (root, body, all) => queryCSS(root, "[id=" + cssQuote(body) + "]", true, all),
+    label: queryLabel,
+    placeholder: attributeEngine("placeholder"),
+    alt: attributeEngine("alt"),
+    title: attributeEngine("title"),
     "data-testid": (root, body, all) => queryCSS(root, "[data-testid=" + cssQuote(body) + "]", true, all),
   };
 
-  function query(selector, root, all) {
+  // Steps that narrow the set found so far instead of searching inside it.
+  //
+  // `div >> nth=1` is not "the second div inside each div" — it is the second
+  // of the divs. The distinction is invisible until a selector has two steps,
+  // and then it is the whole meaning.
+  const FILTERS = {
+    nth: (elements, body) => {
+      const index = parseInt(body, 10);
+      if (isNaN(index)) throw new Error("nth= needs a number, got " + JSON.stringify(body));
+      const picked = index < 0 ? elements[elements.length + index] : elements[index];
+      return picked ? [picked] : [];
+    },
+
+    // Contains the text anywhere inside it — unlike the `text` engine, which
+    // takes the smallest element that has it. `filter(has_text:)` is about
+    // picking one row out of a table by something inside the row.
+    "internal:has-text": (elements, body) => {
+      const matches = textMatcher(body);
+      return elements.filter((element) => matches(normalizeText(element.textContent)));
+    },
+
+    // The body is a whole selector, and it arrives quoted, because a nested
+    // selector is data at this level: `internal:has="span >> b"` is one step
+    // carrying two, and unquoting it is what turns it back into two.
+    "internal:has": (elements, body) => {
+      const inner = body.length > 1 && body[0] === '"' ? JSON.parse(body) : body;
+      return elements.filter((element) => query(inner, element, false, false).length > 0);
+    },
+
+    visible: (elements, body) => {
+      const wanted = body !== "false";
+      return elements.filter((element) => isVisible(element) === wanted);
+    },
+  };
+
+  function strictViolation(selector, matches) {
+    const shown = matches.slice(0, 5).map((element, index) => "\n  " + (index + 1) + ") " + previewNode(element));
+    if (matches.length > shown.length) shown.push("\n  ...");
+    return new Error(
+      "strict mode violation: " + selector + " resolved to " + matches.length + " elements:" +
+        shown.join("") +
+        "\n\nUse .nth(), .first or .last to say which one, or narrow the selector."
+    );
+  }
+
+  function query(selector, root, all, strict) {
     const steps = splitSteps(selector);
     if (!steps.length) throw new Error("The selector is empty.");
 
     let current = [root || document];
+    let searched = false;
+
     for (let s = 0; s < steps.length; s++) {
       const step = parseStep(steps[s]);
-      const last = s === steps.length - 1;
-      const engine = ENGINES[step.engine];
-      const next = [];
-      const seen = new Set();
 
-      for (let c = 0; c < current.length; c++) {
-        // Every branch of an intermediate step has to be explored even when the
-        // caller only wants one element in the end, because the first match of
-        // step one need not be the one whose subtree contains step two.
-        const hits = engine(current[c], step.body, all || !last);
-        for (let h = 0; h < hits.length; h++) {
-          if (seen.has(hits[h])) continue;
-          seen.add(hits[h]);
-          next.push(hits[h]);
-          if (last && !all) return next;
+      if (FILTERS[step.engine]) {
+        if (!searched) {
+          throw new Error(step.engine + "= has nothing to narrow: it has to follow a selector.");
         }
+        current = FILTERS[step.engine](current, step.body);
+      } else {
+        const engine = ENGINES[step.engine];
+        const next = [];
+        const seen = new Set();
+
+        // Every branch is explored even when the caller wants one element in
+        // the end. The first match of step one need not be the one whose
+        // subtree contains step two — and strict mode has to know how many
+        // there were, which is a question that cannot be answered early.
+        for (let c = 0; c < current.length; c++) {
+          const hits = engine(current[c], step.body, true);
+          for (let h = 0; h < hits.length; h++) {
+            if (seen.has(hits[h])) continue;
+            seen.add(hits[h]);
+            next.push(hits[h]);
+          }
+        }
+        current = next;
+        searched = true;
       }
 
-      if (!next.length) return [];
-      current = next;
+      if (!current.length) return [];
     }
-    return current;
+
+    if (strict && current.length > 1) throw strictViolation(selector, current);
+    return all ? current : current.slice(0, 1);
   }
 
   // What an element looks like in a failure message. A selector that did not
@@ -846,8 +971,9 @@
   // format `evaluate` uses, so an element is a handle and a selector is a
   // string that is never compiled as code.
   const api = {
-    querySelector: (selector, root) => query(selector, root, false)[0] || null,
-    querySelectorAll: (selector, root) => query(selector, root, true),
+    querySelector: (selector, root, strict) => query(selector, root, false, !!strict)[0] || null,
+    querySelectorAll: (selector, root) => query(selector, root, true, false),
+    count: (selector, root) => query(selector, root, true, false).length,
     visible: (element) => isVisible(element),
     textContent: (element) => element.textContent,
     innerText: (element) => element.innerText,
@@ -857,7 +983,7 @@
     // One round trip per poll answers "is it there yet" for every state,
     // including the two that are about absence.
     selectorState: (selector, root, state) => {
-      const element = query(selector, root, false)[0] || null;
+      const element = query(selector, root, false, false)[0] || null;
       if (state === "attached") return element ? { found: true } : { found: false };
       if (state === "detached") return { found: !element };
       if (state === "visible") return element && isVisible(element) ? { found: true } : { found: false };
@@ -886,6 +1012,7 @@
     scrollIntoView: (element, options) => scrollNodeIntoView(element, options),
     prepareFill: (element, value) => fillNode(element, value),
     value: (element) => nodeValue(element),
+    text: (element) => normalizeText(element.textContent),
     focus: (element) => {
       const target = retarget(element, "follow-label");
       if (!target || !target.isConnected) return "error:notconnected";

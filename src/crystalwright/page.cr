@@ -88,6 +88,48 @@ module Crystalwright
       @frames_manager.with_signals(progress) { yield }
     end
 
+    # A locator for this selector, resolved fresh at every use.
+    #
+    # Prefer this to `query_selector` for anything that will be acted on. A
+    # handle refers to one node and dies with it; a locator refers to a question
+    # and asks it again each time — which is what survives a re-render.
+    #
+    # Locators are strict: naming two elements is an error rather than a silent
+    # choice of the first.
+    def locator(selector : String) : Locator
+      main_frame.locator(selector)
+    end
+
+    # A locator for elements whose text matches.
+    def get_by_text(text : String | Regex, exact : Bool = false) : Locator
+      main_frame.get_by_text(text, exact)
+    end
+
+    # A locator for elements carrying this `data-testid`.
+    def get_by_test_id(id : String) : Locator
+      main_frame.get_by_test_id(id)
+    end
+
+    # A locator for the control a `<label>` names, or an element with this `aria-label`.
+    def get_by_label(text : String | Regex, exact : Bool = false) : Locator
+      main_frame.get_by_label(text, exact)
+    end
+
+    # A locator for elements whose `placeholder` matches.
+    def get_by_placeholder(text : String | Regex, exact : Bool = false) : Locator
+      main_frame.get_by_placeholder(text, exact)
+    end
+
+    # A locator for elements whose `alt` matches.
+    def get_by_alt_text(text : String | Regex, exact : Bool = false) : Locator
+      main_frame.get_by_alt_text(text, exact)
+    end
+
+    # A locator for elements whose `title` matches.
+    def get_by_title(text : String | Regex, exact : Bool = false) : Locator
+      main_frame.get_by_title(text, exact)
+    end
+
     # The mouse, in page coordinates.
     #
     # Low level: it goes where it is told and checks nothing. `click` is what

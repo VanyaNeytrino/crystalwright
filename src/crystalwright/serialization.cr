@@ -4,6 +4,32 @@ require "./errors"
 require "./js_value"
 
 module Crystalwright
+  # A Crystal `Regex`'s flags as JavaScript spells them, refusing rather than
+  # guessing.
+  #
+  # The two languages disagree about the letters, and the disagreement is not a
+  # rename. Crystal's `m` is the composite `MULTILINE_ONLY | DOTALL`, so `/a/m`
+  # means what JavaScript writes `/a/ms` — measured, because assuming `m` meant
+  # `m` would produce a pattern matching different text and no error anywhere.
+  #
+  # Mapped one bit at a time rather than one letter at a time, so a `Regex`
+  # built with `DOTALL` alone still arrives with its `s`. Anything with no
+  # counterpart is an error instead of a silent drop.
+  def self.javascript_flags(value : Regex) : String
+    understood = Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE_ONLY | Regex::Options::DOTALL
+    leftover = value.options & ~understood
+    unless leftover.none?
+      raise SerializationError.new("#{value.inspect} uses #{leftover}, which JavaScript's RegExp has no \
+                                    equivalent for. Pass a Crystalwright::JSRegExp with the flags you want instead.")
+    end
+
+    String.build do |io|
+      io << 'i' if value.options.ignore_case?
+      io << 'm' if value.options.multiline_only?
+      io << 's' if value.options.dotall?
+    end
+  end
+
   # Something that can be passed into the page as a live reference rather than
   # as a copy.
   #
@@ -109,20 +135,7 @@ module Crystalwright
       # `Regex` built with `DOTALL` alone still arrives with its `s`. Anything
       # with no counterpart is an error instead of a silent drop.
       def encode(value : Regex) : JSON::Any
-        flags = String.build do |io|
-          io << 'i' if value.options.ignore_case?
-          io << 'm' if value.options.multiline_only?
-          io << 's' if value.options.dotall?
-        end
-
-        understood = Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE_ONLY | Regex::Options::DOTALL
-        leftover = value.options & ~understood
-        unless leftover.none?
-          raise SerializationError.new("#{value.inspect} uses #{leftover}, which JavaScript's RegExp has no equivalent for. \
-                                        Pass a Crystalwright::JSRegExp with the flags you want instead.")
-        end
-
-        encode(JSRegExp.new(value.source, flags))
+        encode(JSRegExp.new(value.source, Crystalwright.javascript_flags(value)))
       end
 
       # :nodoc:

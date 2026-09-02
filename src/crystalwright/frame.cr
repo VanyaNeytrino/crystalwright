@@ -171,6 +171,45 @@ module Crystalwright
       evaluate_in_utility(source, *args, timeout: timeout).cast_to(type)
     end
 
+    # A locator for this selector, resolved fresh at every use.
+    #
+    # Prefer this to `query_selector` for anything that will be acted on: a
+    # handle refers to one node and dies with it, while a locator refers to a
+    # question and asks it again each time.
+    def locator(selector : String) : Locator
+      Locator.new(self, selector)
+    end
+
+    # A locator for elements whose text matches.
+    def get_by_text(text : String | Regex, exact : Bool = false) : Locator
+      Locator.new(self, "").get_by_text(text, exact)
+    end
+
+    # A locator for elements carrying this `data-testid`.
+    def get_by_test_id(id : String) : Locator
+      Locator.new(self, "").get_by_test_id(id)
+    end
+
+    # A locator for the control a `<label>` names, or an element with this `aria-label`.
+    def get_by_label(text : String | Regex, exact : Bool = false) : Locator
+      Locator.new(self, "").get_by_label(text, exact)
+    end
+
+    # A locator for elements whose `placeholder` matches.
+    def get_by_placeholder(text : String | Regex, exact : Bool = false) : Locator
+      Locator.new(self, "").get_by_placeholder(text, exact)
+    end
+
+    # A locator for elements whose `alt` matches.
+    def get_by_alt_text(text : String | Regex, exact : Bool = false) : Locator
+      Locator.new(self, "").get_by_alt_text(text, exact)
+    end
+
+    # A locator for elements whose `title` matches.
+    def get_by_title(text : String | Regex, exact : Bool = false) : Locator
+      Locator.new(self, "").get_by_title(text, exact)
+    end
+
     # The first element in this frame matching the selector, or `nil`.
     #
     # Asks once and answers. Nothing here waits — a page that has not built the
@@ -253,9 +292,9 @@ module Crystalwright
     # view, aims at the middle of what is actually on screen, checks nothing is
     # on top of it, and keeps checking while the events are in flight.
     def click(selector : String, button : MouseButton = MouseButton::Left, click_count : Int32 = 1,
-              force : Bool = false, timeout : Time::Span? = nil) : Nil
+              force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
       progress = Progress.new("click #{selector}", timeout || DEFAULT_TIMEOUT)
-      pointer_action(selector, "click", progress, wait_for_enabled: true, force: force) do |point|
+      pointer_action(selector, "click", progress, wait_for_enabled: true, force: force, strict: strict) do |point|
         @manager.mouse.click(point, button, click_count, progress: progress)
       end
     end
@@ -265,9 +304,9 @@ module Crystalwright
     # Does not wait for it to be enabled: hovering a disabled control is a
     # perfectly ordinary thing to want, since that is often what shows the
     # tooltip explaining why it is disabled.
-    def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil) : Nil
+    def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
       progress = Progress.new("hover #{selector}", timeout || DEFAULT_TIMEOUT)
-      pointer_action(selector, "hover", progress, wait_for_enabled: false, force: force) do |point|
+      pointer_action(selector, "hover", progress, wait_for_enabled: false, force: force, strict: strict) do |point|
         @manager.mouse.move(point.x, point.y, progress)
       end
     end
@@ -279,11 +318,11 @@ module Crystalwright
     # the field and enter the text through real input events, because a page
     # that listens for `input` — which is every page built on a framework —
     # never learns about a value assigned directly.
-    def fill(selector : String, value : String, timeout : Time::Span? = nil) : Nil
+    def fill(selector : String, value : String, timeout : Time::Span? = nil, strict : Bool = false) : Nil
       progress = Progress.new("fill #{selector}", timeout || DEFAULT_TIMEOUT)
 
       retry_action(progress, "fill #{selector}") do |_|
-        element = resolve(selector, progress)
+        element = resolve(selector, progress, strict)
         next ActionOutcome.new(ActionFailure::NotConnected) unless element
 
         begin
@@ -302,11 +341,11 @@ module Crystalwright
     end
 
     # Focuses the first element matching the selector and presses one key.
-    def press(selector : String, key : String, timeout : Time::Span? = nil) : Nil
+    def press(selector : String, key : String, timeout : Time::Span? = nil, strict : Bool = false) : Nil
       progress = Progress.new("press #{key} on #{selector}", timeout || DEFAULT_TIMEOUT)
 
       retry_action(progress, "press #{key} on #{selector}") do |_|
-        element = resolve(selector, progress)
+        element = resolve(selector, progress, strict)
         next ActionOutcome.new(ActionFailure::NotConnected) unless element
 
         begin
@@ -325,9 +364,9 @@ module Crystalwright
     end
 
     private def pointer_action(selector : String, name : String, progress : Progress,
-                               wait_for_enabled : Bool, force : Bool, &action : Point -> Nil) : Nil
+                               wait_for_enabled : Bool, force : Bool, strict : Bool, &action : Point -> Nil) : Nil
       retry_action(progress, "#{name} on #{selector}") do |attempt|
-        element = resolve(selector, progress)
+        element = resolve(selector, progress, strict)
         next ActionOutcome.new(ActionFailure::NotConnected) unless element
 
         begin
@@ -415,9 +454,15 @@ module Crystalwright
     end
 
     # :nodoc:
-    protected def resolve(selector : String, progress : Progress) : ElementHandle?
+    protected def resolve(selector : String, progress : Progress, strict : Bool = false) : ElementHandle?
       check_attached!
-      utility_world(progress).invoke_element("querySelector", selector, nil, progress: progress)
+      utility_world(progress).invoke_element("querySelector", selector, nil, strict, progress: progress)
+    rescue error : EvaluationError
+      # The page raised it, but it is not a page error: it is this shard saying
+      # the caller was ambiguous, and it should not arrive looking like
+      # JavaScript went wrong.
+      raise StrictModeError.new(error.message.to_s) if error.message.to_s.includes?("strict mode violation")
+      raise error
     end
 
     private def matched?(selector : String, wanted : String, progress : Progress) : Bool

@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <title>visibility</title>
+    <style>
+      .none { display: none; }
+      .hidden { visibility: hidden; }
+      .transparent { opacity: 0; }
+      .empty-box { width: 0; height: 0; }
+      .far-away { position: absolute; left: -9999px; top: -9999px; }
+      .contents { display: contents; }
+      .shown-again { visibility: visible; }
+    </style>
+  </head>
+  <body>
+    <!-- Every case where two reasonable implementations could disagree, which
+         is the only kind worth comparing. Opacity is the classic: a fully
+         transparent element is invisible to a person and visible to the
+         platform, and it still receives clicks. -->
+    <div id="plain">plain</div>
+    <div id="display-none" class="none">display none</div>
+    <div id="visibility-hidden" class="hidden">visibility hidden</div>
+    <div id="transparent" class="transparent">opacity zero</div>
+    <div id="zero-size" class="empty-box"></div>
+    <div id="off-screen" class="far-away">off screen</div>
+    <div id="empty-inline"><span id="inline-nothing"></span></div>
+
+    <div class="hidden"><div id="inside-hidden">inherits hidden</div></div>
+    <div class="hidden"><div id="shown-again" class="shown-again">shown again</div></div>
+    <div class="none"><div id="inside-none">inside display none</div></div>
+
+    <div id="contents-with-text" class="contents">text inside a contents box</div>
+    <div id="contents-with-element" class="contents"><span>an element inside</span></div>
+    <div id="contents-with-hidden" class="contents"><span class="none">hidden inside</span></div>
+    <div id="contents-empty" class="contents"></div>
+
+    <details id="closed-details">
+      <summary id="closed-summary">summary</summary>
+      <div id="inside-closed-details">hidden until opened</div>
+    </details>
+
+    <details id="open-details" open>
+      <summary>open summary</summary>
+      <div id="inside-open-details">visible now</div>
+    </details>
+
+    <div id="attribute-hidden" hidden>hidden attribute</div>
+    <div id="tiny" style="width: 1px; height: 1px">tiny but there</div>
+  </body>
+</html>

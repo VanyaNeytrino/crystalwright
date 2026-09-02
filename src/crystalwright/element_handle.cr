@@ -271,6 +271,27 @@ module Crystalwright
       read(@context.invoke("focus", self, progress: progress))
     end
 
+    # The element's text with whitespace collapsed, as the selector engine sees
+    # it.
+    #
+    # Normalised in the page rather than here, so that an assertion and a
+    # `text=` selector cannot disagree about what the text is.
+    def text(timeout : Time::Span? = nil) : String
+      call("text", timeout).as_s
+    end
+
+    # Whether the element is in a named state, and what it is instead.
+    #
+    # Returns both, because an assertion that fails has to say what was actually
+    # there — "expected enabled" on its own tells the reader what they already
+    # typed.
+    def state(name : String, timeout : Time::Span? = nil) : Tuple(Bool, String)
+      progress = Progress.new("state #{name}", timeout || DEFAULT_TIMEOUT)
+      guard
+      answer = @context.invoke("elementState", self, name, progress: progress)
+      {answer["matches"].as_bool, answer["received"].as_s}
+    end
+
     # The current value of an input, textarea, select or contenteditable.
     def value(timeout : Time::Span? = nil) : String?
       call("value", timeout).as_s?

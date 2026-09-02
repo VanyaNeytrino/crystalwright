@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head><title>strict</title></head>
+  <body>
+    <ul id="rows">
+      <li class="row"><span class="name">Ada</span> <button class="remove">Delete</button></li>
+      <li class="row"><span class="name">Grace</span> <button class="remove">Delete</button></li>
+      <li class="row"><span class="name">Barbara</span> <button class="remove" disabled>Delete</button></li>
+    </ul>
+
+    <div id="forms">
+      <label for="who">Your name</label>
+      <input id="who" placeholder="Type it here" title="the name field" />
+      <input id="also-visible" placeholder="Another one" />
+      <input id="hidden-one" aria-label="Secret" style="display: none" />
+      <img id="picture" alt="A photograph of nothing" src="data:," />
+    </div>
+
+    <div id="result">nothing yet</div>
+    <script>
+      document.querySelectorAll(".remove").forEach(function (button) {
+        button.addEventListener("click", function () {
+          document.getElementById("result").textContent =
+            "removed " + this.closest(".row").querySelector(".name").textContent;
+        });
+      });
+    </script>
+  </body>
+</html>
