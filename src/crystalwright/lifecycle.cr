@@ -42,4 +42,12 @@ module Crystalwright
   # is the residue of a bug report somebody else already paid for, and a fresh
   # guess would have to earn its way back to the same place.
   NETWORK_IDLE_WINDOW = 500.milliseconds
+
+  # How often `wait_for_selector` asks the page again.
+  #
+  # An element appearing sends no protocol event, so this is the one wait with
+  # nothing to be woken by. Small enough that a person does not see it, large
+  # enough that a thirty-second wait is six hundred round trips and not sixty
+  # thousand.
+  SELECTOR_POLL = 50.milliseconds
 end

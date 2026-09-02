@@ -85,6 +85,13 @@ class FixtureServer
     when "/poll"
       context.response.content_type = CONTENT_TYPES[".txt"]
       context.response.print("tick")
+    when .starts_with?("/strict-csp/")
+      # The same file under a policy that forbids every script the page could
+      # load or run. What has to keep working is this library, which never goes
+      # through the page's script loader at all.
+      context.response.headers["Content-Security-Policy"] =
+        "default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'"
+      serve_file(context, path.sub("/strict-csp", ""))
     when "/redirect"
       context.response.status = HTTP::Status::FOUND
       context.response.headers["Location"] = query["to"]? || "/poll"

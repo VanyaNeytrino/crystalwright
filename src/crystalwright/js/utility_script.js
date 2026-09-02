@@ -198,6 +198,291 @@
 
   const finish = (value, byValue) => (byValue ? serialize(value, new Map()) : value);
 
+  // --- selectors -------------------------------------------------------------
+  //
+  // A selector is one or more steps joined by ">>", and each step names an
+  // engine: "css=div.foo", "text=Sign in", "xpath=//button", "id=submit". A step
+  // with no engine is xpath when it starts with "//" or "..", and css otherwise.
+  // Chaining searches inside what the step before it found.
+  //
+  // Parsing lives here rather than in Crystal on purpose. The alternative is a
+  // CSS tokenizer in a second language, kept in step with this one by hand, to
+  // answer questions the browser can already answer.
+  //
+  // None of this defends itself against the page, because it does not have to:
+  // this runs in an isolated world with its own copies of every built-in.
+  // Measured against a page that reassigns Array.prototype.map,
+  // document.querySelector, Element.prototype.getBoundingClientRect,
+  // Object.defineProperty and JSON.stringify — all nine overrides are invisible
+  // from here, while the same calls in the page's own world do break.
+
+  const NON_TEXT_NODES = { SCRIPT: true, STYLE: true, NOSCRIPT: true, TEMPLATE: true };
+
+  const normalizeText = (text) =>
+    String(text == null ? "" : text).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+
+  // Splits on ">>" while leaving quoted text and bracketed CSS alone, so that
+  // `text="a >> b"` and `div[data-x=">>"]` survive.
+  function splitSteps(selector) {
+    const steps = [];
+    let start = 0;
+    let quote = null;
+    let depth = 0;
+
+    for (let i = 0; i < selector.length; i++) {
+      const c = selector[i];
+      if (quote) {
+        if (c === "\\") i++;
+        else if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === "`") quote = c;
+      else if (c === "(" || c === "[") depth++;
+      else if (c === ")" || c === "]") depth--;
+      else if (depth === 0 && c === ">" && selector[i + 1] === ">") {
+        steps.push(selector.slice(start, i));
+        i++;
+        start = i + 1;
+      }
+    }
+    steps.push(selector.slice(start));
+
+    const trimmed = [];
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i].trim();
+      if (step.length) trimmed.push(step);
+    }
+    return trimmed;
+  }
+
+  function parseStep(step) {
+    const eq = step.indexOf("=");
+    if (eq > 0) {
+      const name = step.slice(0, eq).trim();
+      // Only a name that is actually an engine counts, so `[href="x"]` and
+      // `css=div[a=b]` both mean what they look like.
+      if (ENGINES[name]) return { engine: name, body: step.slice(eq + 1).trim() };
+    }
+    if (step.slice(0, 2) === "//" || step.slice(0, 2) === "..") return { engine: "xpath", body: step };
+    return { engine: "css", body: step };
+  }
+
+  // Every place a query can look: the root, plus every open shadow root under
+  // it, recursively. Closed roots are absent by construction — measured, they
+  // are unreachable from here even through a reference the page kept itself.
+  function scopesUnder(root) {
+    const scopes = [root];
+    if (root.shadowRoot) scopes.push(root.shadowRoot);
+    for (let i = 0; i < scopes.length; i++) {
+      const elements = scopes[i].querySelectorAll("*");
+      for (let j = 0; j < elements.length; j++) {
+        const shadow = elements[j].shadowRoot;
+        if (shadow) scopes.push(shadow);
+      }
+    }
+    return scopes;
+  }
+
+  function queryCSS(root, body, pierce, all) {
+    const found = [];
+    const scopes = pierce ? scopesUnder(root) : [root];
+    for (let s = 0; s < scopes.length; s++) {
+      let list;
+      try {
+        list = scopes[s].querySelectorAll(body);
+      } catch (error) {
+        throw new Error("Not a valid CSS selector: " + body);
+      }
+      for (let i = 0; i < list.length; i++) {
+        found.push(list[i]);
+        if (!all) return found;
+      }
+    }
+    return found;
+  }
+
+  // `text=Sign in`   case-insensitive substring, whitespace collapsed
+  // `text="Sign in"` exact after collapsing, case sensitive
+  // `text=/^Sign/i`  regular expression
+  function textMatcher(body) {
+    if (body.length > 1 && body[0] === '"' && body[body.length - 1] === '"') {
+      const literal = normalizeText(JSON.parse(body));
+      return (text) => text === literal;
+    }
+    if (body.length > 2 && body[0] === "/") {
+      const end = body.lastIndexOf("/");
+      if (end > 0) {
+        const pattern = new RegExp(body.slice(1, end), body.slice(end + 1));
+        return (text) => {
+          pattern.lastIndex = 0;
+          return pattern.test(text);
+        };
+      }
+    }
+    const needle = normalizeText(body).toLowerCase();
+    return (text) => text.toLowerCase().indexOf(needle) !== -1;
+  }
+
+  const elementText = (element) => {
+    if (NON_TEXT_NODES[element.nodeName]) return "";
+    if (element.nodeName === "INPUT" && (element.type === "submit" || element.type === "button")) {
+      return normalizeText(element.value);
+    }
+    return normalizeText(element.textContent);
+  };
+
+  function queryText(root, body, all) {
+    const matches = textMatcher(body);
+    const found = [];
+    const scopes = scopesUnder(root);
+
+    for (let s = 0; s < scopes.length; s++) {
+      const elements = scopes[s].querySelectorAll("*");
+      for (let i = 0; i < elements.length; i++) {
+        const element = elements[i];
+        if (!matches(elementText(element))) continue;
+
+        // The smallest element that contains the text, not every ancestor of
+        // it. Without this, `text=Save` on any page also matches <body>.
+        const inside = element.querySelectorAll("*");
+        let deeper = false;
+        for (let j = 0; j < inside.length && !deeper; j++) {
+          if (matches(elementText(inside[j]))) deeper = true;
+        }
+        if (deeper) continue;
+
+        found.push(element);
+        if (!all) return found;
+      }
+    }
+    return found;
+  }
+
+  // XPath does not cross shadow boundaries and is not made to: the language has
+  // no way to express the hop, and pretending otherwise would mean a selector
+  // that means different things here and in the browser's own console.
+  function queryXPath(root, body, all) {
+    const document_ = root.ownerDocument || root;
+    const found = [];
+    let result;
+    try {
+      result = document_.evaluate(body, root, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+    } catch (error) {
+      throw new Error("Not a valid XPath expression: " + body);
+    }
+    let node = result.iterateNext();
+    while (node) {
+      if (node.nodeType === 1) {
+        found.push(node);
+        if (!all) return found;
+      }
+      node = result.iterateNext();
+    }
+    return found;
+  }
+
+  const cssQuote = (value) => '"' + String(value).replace(/(["\\])/g, "\\$1") + '"';
+
+  const ENGINES = {
+    css: (root, body, all) => queryCSS(root, body, true, all),
+    "css:light": (root, body, all) => queryCSS(root, body, false, all),
+    text: (root, body, all) => queryText(root, body, all),
+    xpath: (root, body, all) => queryXPath(root, body, all),
+    id: (root, body, all) => queryCSS(root, "[id=" + cssQuote(body) + "]", true, all),
+    "data-testid": (root, body, all) => queryCSS(root, "[data-testid=" + cssQuote(body) + "]", true, all),
+  };
+
+  function query(selector, root, all) {
+    const steps = splitSteps(selector);
+    if (!steps.length) throw new Error("The selector is empty.");
+
+    let current = [root || document];
+    for (let s = 0; s < steps.length; s++) {
+      const step = parseStep(steps[s]);
+      const last = s === steps.length - 1;
+      const engine = ENGINES[step.engine];
+      const next = [];
+      const seen = new Set();
+
+      for (let c = 0; c < current.length; c++) {
+        // Every branch of an intermediate step has to be explored even when the
+        // caller only wants one element in the end, because the first match of
+        // step one need not be the one whose subtree contains step two.
+        const hits = engine(current[c], step.body, all || !last);
+        for (let h = 0; h < hits.length; h++) {
+          if (seen.has(hits[h])) continue;
+          seen.add(hits[h]);
+          next.push(hits[h]);
+          if (last && !all) return next;
+        }
+      }
+
+      if (!next.length) return [];
+      current = next;
+    }
+    return current;
+  }
+
+  // Visible enough to be worth waiting for: it has a box, and it is not
+  // `visibility: hidden`. The rest of what an element has to be before it can
+  // be clicked — stable, enabled, actually on top at the point it will be
+  // clicked — is a separate question and a later one.
+  function isVisible(element) {
+    if (!element || element.nodeType !== 1) return false;
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    if (!view) return false;
+    const style = view.getComputedStyle(element);
+    if (!style || style.visibility === "hidden") return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  // What an element looks like in a failure message. A selector that did not
+  // match is debugged by seeing what was there instead.
+  function previewNode(node) {
+    if (!node) return "nothing";
+    if (node.nodeType === 3) return '#text="' + normalizeText(node.nodeValue).slice(0, 50) + '"';
+    if (node.nodeType !== 1) return "#node";
+
+    const name = node.nodeName.toLowerCase();
+    let attributes = "";
+    const interesting = ["id", "data-testid", "name", "type", "class"];
+    for (let i = 0; i < interesting.length; i++) {
+      const value = node.getAttribute(interesting[i]);
+      if (value) attributes += " " + interesting[i] + '="' + clip(value, 40) + '"';
+    }
+
+    const body = node.children.length ? "…" : clip(elementText(node), 40);
+    return "<" + name + attributes + ">" + body + "</" + name + ">";
+  }
+
+  const clip = (text, limit) => (text.length > limit ? text.slice(0, limit) + "…" : text);
+
+  // What Crystal can ask for by name. Arguments arrive through the same tagged
+  // format `evaluate` uses, so an element is a handle and a selector is a
+  // string that is never compiled as code.
+  const api = {
+    querySelector: (selector, root) => query(selector, root, false)[0] || null,
+    querySelectorAll: (selector, root) => query(selector, root, true),
+    visible: (element) => isVisible(element),
+    textContent: (element) => element.textContent,
+    innerText: (element) => element.innerText,
+    getAttribute: (element, name) => element.getAttribute(name),
+    previewNode: (node) => previewNode(node),
+
+    // One round trip per poll answers "is it there yet" for every state,
+    // including the two that are about absence.
+    selectorState: (selector, root, state) => {
+      const element = query(selector, root, false)[0] || null;
+      if (state === "attached") return element ? { found: true } : { found: false };
+      if (state === "detached") return { found: !element };
+      if (state === "visible") return element && isVisible(element) ? { found: true } : { found: false };
+      if (state === "hidden") return { found: !element || !isVisible(element) };
+      throw new Error("Unknown selector state: " + state);
+    },
+  };
+
+
   return {
     // Called through Runtime.callFunctionOn with this object as the receiver.
     //
@@ -226,6 +511,23 @@
         return result.then((resolved) => finish(resolved, payload.r));
       }
       return finish(result, payload.r);
+    },
+
+    // Calls one of this script's own functions by name.
+    //
+    // Separate from `evaluate` because the caller's source is not involved:
+    // there is nothing to compile, and a selector travels as a string argument
+    // rather than as code, which is what keeps `text="'); alert(1); //"` a
+    // piece of text.
+    invoke(name, payload, handles) {
+      const refs = new Map();
+      const args = [];
+      const tagged = payload.a || [];
+      for (let i = 0; i < tagged.length; i++) args.push(parse(tagged[i], handles, refs));
+
+      const fn = api[name];
+      if (!fn) throw new Error("No such utility function: " + name);
+      return finish(fn.apply(null, args), payload.r);
     },
   };
 })()

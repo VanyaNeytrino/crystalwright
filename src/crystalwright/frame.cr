@@ -3,6 +3,7 @@ require "./errors"
 require "./lifecycle"
 require "./network_accountant"
 require "./execution_context"
+require "./element_handle"
 require "./progress"
 
 module Crystalwright
@@ -170,6 +171,65 @@ module Crystalwright
       evaluate_in_utility(source, *args, timeout: timeout).cast_to(type)
     end
 
+    # The first element in this frame matching the selector, or `nil`.
+    #
+    # Asks once and answers. Nothing here waits — a page that has not built the
+    # element yet gets `nil`, which is a fact about right now. Waiting for it to
+    # appear is `wait_for_selector`, and it is a different question.
+    def query_selector(selector : String, timeout : Time::Span? = nil) : ElementHandle?
+      resolve(selector, Progress.new("query_selector #{selector}", timeout || DEFAULT_TIMEOUT))
+    end
+
+    # Every element in this frame matching the selector.
+    def query_selector_all(selector : String, timeout : Time::Span? = nil) : Array(ElementHandle)
+      progress = Progress.new("query_selector_all #{selector}", timeout || DEFAULT_TIMEOUT)
+      utility_world(progress).invoke_elements("querySelectorAll", selector, nil, progress: progress)
+    end
+
+    # Waits until an element matching the selector reaches a state.
+    #
+    # Returns the element for `Attached` and `Visible`, and `nil` for `Hidden`
+    # and `Detached`, because in those two the answer is that there is nothing
+    # to hand back.
+    #
+    # This is the point of the library rather than a convenience. A test that
+    # queries and then acts is a test that fails whenever the machine is busy;
+    # one that waits for a condition it can name fails only when the condition
+    # is genuinely never met, and then says which one it was.
+    def wait_for_selector(selector : String, state : ElementState = ElementState::Visible, timeout : Time::Span? = nil) : ElementHandle?
+      progress = Progress.new("wait_for_selector #{selector} #{state.to_wire}", timeout || DEFAULT_TIMEOUT)
+      wanted = state.to_wire
+
+      # Polled rather than pushed. Nothing in the protocol fires when an element
+      # appears, so there is no doorbell to wait on — Playwright answers this
+      # with a MutationObserver inside the page, which is a round trip saved and
+      # a moving part added, and is worth doing when the round trips show up in
+      # a measurement rather than before.
+      @manager.wait_until(progress, "#{selector} to be #{wanted}", recheck: -> { SELECTOR_POLL.as(Time::Span?) }) do
+        check_attached!
+        matched?(selector, wanted, progress)
+      end
+
+      case state
+      in ElementState::Attached, ElementState::Visible
+        resolve(selector, progress)
+      in ElementState::Hidden, ElementState::Detached
+        nil
+      end
+    end
+
+    # The text of the first element matching the selector.
+    def text_content(selector : String, timeout : Time::Span? = nil) : String?
+      progress = Progress.new("text_content #{selector}", timeout || DEFAULT_TIMEOUT)
+      element = resolve(selector, progress)
+      raise no_match(selector) unless element
+      begin
+        element.text_content(progress.remaining)
+      ensure
+        element.dispose
+      end
+    end
+
     # This frame's own JavaScript world, waiting for it if a navigation is in flight.
     def main_world(progress : Progress) : ExecutionContext
       await_context(progress, "the main world of #{describe}", ->(context : ExecutionContext) { context.name.empty? })
@@ -179,6 +239,27 @@ module Crystalwright
     def utility_world(progress : Progress) : ExecutionContext
       wanted = @manager.utility_world_name
       await_context(progress, "the utility world of #{describe}", ->(context : ExecutionContext) { context.name == wanted })
+    end
+
+    # :nodoc:
+    protected def resolve(selector : String, progress : Progress) : ElementHandle?
+      check_attached!
+      utility_world(progress).invoke_element("querySelector", selector, nil, progress: progress)
+    end
+
+    private def matched?(selector : String, wanted : String, progress : Progress) : Bool
+      utility_world(progress)
+        .invoke("selectorState", selector, nil, wanted, progress: progress)["found"].as_bool
+    rescue ContextDestroyedError
+      # The document went out from under the poll. The next document gets the
+      # same question rather than the caller getting an error about a page that
+      # is already gone.
+      false
+    end
+
+    private def no_match(selector : String) : Error
+      Error.new("No element matched #{selector.inspect} in #{describe}. Use \
+                 wait_for_selector if it is expected to appear later.")
     end
 
     # :nodoc:

@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head><title>shadow</title></head>
+  <body>
+    <div id="light"><button class="target">light button</button></div>
+    <div id="open-host"></div>
+    <div id="closed-host"></div>
+    <script>
+      const open = document.getElementById("open-host").attachShadow({ mode: "open" });
+      open.innerHTML =
+        '<button class="target" id="in-open">open button</button><div id="nested"></div>';
+
+      const deep = open.getElementById("nested").attachShadow({ mode: "open" });
+      deep.innerHTML = '<button class="target" id="in-deep">deep button</button>';
+
+      // Closed roots are unreachable from an isolated world — measured, even
+      // through a reference the page keeps itself. This one is here so that the
+      // limit is asserted rather than assumed.
+      const closed = document.getElementById("closed-host").attachShadow({ mode: "closed" });
+      closed.innerHTML = '<button class="target" id="in-closed">closed button</button>';
+      window.__closed = closed;
+    </script>
+  </body>
+</html>

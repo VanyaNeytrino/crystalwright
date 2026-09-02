@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head><title>delayed</title></head>
+  <body>
+    <div id="here-now">present from the start</div>
+    <div id="goes-away">present for now</div>
+    <script>
+      // 300 ms is long enough that a query made straight after the load event
+      // reliably misses it, which is the point of the fixture.
+      setTimeout(function () {
+        const late = document.createElement("div");
+        late.id = "arrives-late";
+        late.textContent = "here at last";
+        document.body.appendChild(late);
+
+        document.getElementById("goes-away").style.display = "none";
+      }, 300);
+    </script>
+  </body>
+</html>

@@ -88,6 +88,31 @@ module Crystalwright
       @frames_manager.with_signals(progress) { yield }
     end
 
+    # The first element in the page matching the selector, or `nil`.
+    #
+    # Selectors are `css=`, `text=`, `xpath=`, `id=` and `data-testid=`, chained
+    # with `>>`; a step with no engine is xpath when it starts with `//` and css
+    # otherwise. `css=` looks inside open shadow roots, and `css:light=` does
+    # not.
+    def query_selector(selector : String, timeout : Time::Span? = nil) : ElementHandle?
+      main_frame.query_selector(selector, timeout)
+    end
+
+    # Every element in the page matching the selector.
+    def query_selector_all(selector : String, timeout : Time::Span? = nil) : Array(ElementHandle)
+      main_frame.query_selector_all(selector, timeout)
+    end
+
+    # Waits until an element matching the selector reaches a state.
+    def wait_for_selector(selector : String, state : ElementState = ElementState::Visible, timeout : Time::Span? = nil) : ElementHandle?
+      main_frame.wait_for_selector(selector, state, timeout)
+    end
+
+    # The text of the first element matching the selector.
+    def text_content(selector : String, timeout : Time::Span? = nil) : String?
+      main_frame.text_content(selector, timeout)
+    end
+
     # Evaluates in the page's own world and copies the result out.
     #
     # The main world, not the isolated one, because that is where the page's

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head><title>hostile</title></head>
+  <body>
+    <div id="target" class="mine">the real text</div>
+    <button data-testid="go">Press me</button>
+    <script>
+      // Everything a page can do to an automation script that shares its world.
+      // None of it is visible from the isolated world, which is the entire
+      // reason there is one.
+      Array.prototype.map = function () { throw new Error("map is mine"); };
+      Array.prototype.push = function () { throw new Error("push is mine"); };
+      Array.prototype.indexOf = function () { throw new Error("indexOf is mine"); };
+      Array.isArray = function () { return false; };
+      document.querySelector = function () { return null; };
+      document.querySelectorAll = function () { return []; };
+      document.evaluate = function () { throw new Error("evaluate is mine"); };
+      document.getElementById = function () { return null; };
+      Element.prototype.getBoundingClientRect = function () {
+        return { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 };
+      };
+      Element.prototype.getAttribute = function () { return "lies"; };
+      Object.defineProperty = function () { throw new Error("defineProperty is mine"); };
+      Object.getPrototypeOf = function () { throw new Error("getPrototypeOf is mine"); };
+      Object.prototype.toString = function () { throw new Error("toString is mine"); };
+      JSON.stringify = function () { throw new Error("stringify is mine"); };
+      JSON.parse = function () { throw new Error("parse is mine"); };
+      Node.prototype.appendChild = function () { throw new Error("appendChild is mine"); };
+      window.getComputedStyle = function () { throw new Error("getComputedStyle is mine"); };
+      Object.defineProperty === undefined;
+    </script>
+  </body>
+</html>

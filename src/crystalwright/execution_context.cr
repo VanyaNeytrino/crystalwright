@@ -72,7 +72,7 @@ module Crystalwright
     # Evaluates in this world and copies the result out.
     def evaluate(source : String, *args, progress : Progress? = nil) : JSValue
       progress ||= Progress.new("evaluate", DEFAULT_TIMEOUT)
-      response = call(source, args, by_value: true, progress: progress)
+      response = call(declaration(source), args, by_value: true, progress: progress)
       raw = response.result.value || raise SerializationError.new("the page returned nothing at all for #{source}")
       Serialization::Decoder.new.decode(raw)
     end
@@ -80,7 +80,7 @@ module Crystalwright
     # Evaluates in this world and leaves the result in the page.
     def evaluate_handle(source : String, *args, progress : Progress? = nil) : JSHandle
       progress ||= Progress.new("evaluate_handle", DEFAULT_TIMEOUT)
-      response = call(source, args, by_value: false, progress: progress)
+      response = call(declaration(source), args, by_value: false, progress: progress)
       object = response.result
       object_id = object.object_id
       unless object_id
@@ -130,7 +130,74 @@ module Crystalwright
       @mutex.synchronize { @destroyed = true }
     end
 
-    private def call(source : String, args, by_value : Bool, progress : Progress) : CDP::Protocol::Runtime::CallFunctionOnResponse
+    # Calls one of the utility script's own functions by name.
+    #
+    # Nothing of the caller's is compiled here: a selector arrives as a string
+    # argument through the same tagged encoding an `evaluate` argument uses, so
+    # `text="'); alert(1); //"` is a piece of text on both sides of the wire.
+    protected def invoke(name : String, *args, progress : Progress) : JSValue
+      response = call(utility_declaration(name), args, by_value: true, progress: progress)
+      raw = response.result.value || raise SerializationError.new("#{name} returned nothing at all")
+      Serialization::Decoder.new.decode(raw)
+    end
+
+    # :ditto:
+    #
+    # Returns `nil` when the function answered with JavaScript `null`, which is
+    # how "no element matched" arrives — an answer rather than a failure.
+    protected def invoke_handle(name : String, *args, progress : Progress) : JSHandle?
+      object = call(utility_declaration(name), args, by_value: false, progress: progress).result
+      object_id = object.object_id
+      return unless object_id
+      track_issue
+      JSHandle.new(self, object_id, object)
+    end
+
+    # :ditto:
+    protected def invoke_element(name : String, *args, progress : Progress) : ElementHandle?
+      object = call(utility_declaration(name), args, by_value: false, progress: progress).result
+      object_id = object.object_id
+      return unless object_id
+      track_issue
+      ElementHandle.new(self, object_id, object)
+    end
+
+    # :ditto:
+    #
+    # For a function that answers with an array of elements. The array itself is
+    # a handle too and is released here — leaving it behind would pin every
+    # element in a query result for the life of the document.
+    protected def invoke_elements(name : String, *args, progress : Progress) : Array(ElementHandle)
+      array = invoke_handle(name, *args, progress: progress)
+      return [] of ElementHandle unless array
+
+      begin
+        response = execute(CDP::Protocol::Runtime::GetPropertiesRequest.new(
+          object_id: array.remote_object_id, own_properties: true, generate_preview: false), progress)
+
+        indexed = [] of Tuple(Int32, ElementHandle)
+        response.result.each do |property|
+          # `length` and anything else that is not an index is not an element.
+          index = property.name.to_i?
+          next unless index
+          value = property.value
+          next unless value
+          object_id = value.object_id
+          next unless object_id
+          track_issue
+          indexed << {index, ElementHandle.new(self, object_id, value)}
+        end
+
+        # Document order is the order the page answered in, and a hash of string
+        # keys is not obliged to keep it.
+        indexed.sort_by! { |(index, _)| index }
+        indexed.map { |(_, element)| element }
+      ensure
+        array.dispose
+      end
+    end
+
+    private def call(declaration : String, args, by_value : Bool, progress : Progress) : CDP::Protocol::Runtime::CallFunctionOnResponse
       raise ContextDestroyedError.new if destroyed?
       progress.check!
 
@@ -150,10 +217,10 @@ module Crystalwright
         arguments << CDP::Protocol::Runtime::CallArgument.new(object_id: handle_id)
       end
 
-      progress.log("evaluating in the #{@name.empty? ? "main" : @name} world")
+      progress.log("calling into the #{@name.empty? ? "main" : @name} world")
 
       response = execute(CDP::Protocol::Runtime::CallFunctionOnRequest.new(
-        function_declaration: declaration(source),
+        function_declaration: declaration,
         object_id: utility_object_id(progress),
         arguments: arguments,
         return_by_value: by_value,
@@ -182,6 +249,15 @@ module Crystalwright
     # Content-Security-Policy forbids `eval`.
     private def declaration(source : String) : String
       "function (payload, ...handles) { return this.evaluate(payload, handles, (#{source})); }"
+    end
+
+    # The same wrapper for a function the utility script already defines.
+    #
+    # The name is a literal from this shard and never anything a caller supplied,
+    # and it is still quoted rather than interpolated bare — the moment that
+    # stops being true by accident, this is the line that would have to change.
+    private def utility_declaration(name : String) : String
+      "function (payload, ...handles) { return this.invoke(#{name.to_json}, payload, handles); }"
     end
 
     # Evaluates the utility script once, and keeps the object it returns.

@@ -158,6 +158,13 @@ Crystal 1.21 or newer, and a Chrome or Chromium on the machine. Nothing is
 downloaded at build time and no browser is downloaded at all: the path comes
 from `CDP_CHROME_PATH`, from `CHROME_PATH`, or from the usual install locations.
 
+There is no Node.js anywhere in this — not at build time, not at run time, and
+not as a hidden driver process. A program that uses this shard is one binary
+talking to Chrome. There *is* JavaScript, and it runs inside the page, executed
+by the browser's own engine: selecting an element and asking what it says are
+questions only the page can answer. That script is read into the binary at
+compile time, so there is nothing beside the executable to ship.
+
 ## Safety
 
 Inherited from the shard below and not weakened here: the sandbox stays on, no
@@ -179,7 +186,6 @@ dependencies:
 crystal spec --tag "~integration"   # no browser
 crystal spec                        # everything, needs Chrome
 crystal tool format --check && ./bin/ameba
-node --check src/crystalwright/js/utility_script.js
 
 # Crystal 1.21 runs fibers at a parallelism of one unless told otherwise, so
 # this is the only run that can fail on a data race.
