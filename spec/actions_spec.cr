@@ -323,23 +323,39 @@ describe "actions", tags: "integration" do
       end
 
       it "does not wait for a disabled element before hovering it" do
-        with_fixtures do |server|
+        pages = {"/hover-disabled" => <<-HTML}
+          <!doctype html><meta charset="utf-8">
+          <button id="target" disabled>Never enabled</button>
+          <div id="result">not hovered</div>
+          <script>
+            document.getElementById("target").addEventListener("mouseover", function () {
+              document.getElementById("result").textContent = "hovered";
+            });
+          </script>
+          HTML
+        with_fixtures(pages) do |server|
           with_page do |page|
-            page.goto(server.url("/late-enable.html"))
+            page.goto(server.url("/hover-disabled"))
 
             # Hovering a disabled control is ordinary: it is usually what shows
             # the tooltip explaining why it is disabled. So hover asks for
             # visible and stable, and click also asks for enabled.
+            #
+            # The button is disabled and never becomes enabled, which is what
+            # takes the clock out of this entirely. Two earlier versions raced a
+            # timer instead — the first compared elapsed time against 300 ms and
+            # CI failed it twice on macOS; the second compared two instants from
+            # the page's own clock, which fixed the wrong half, because the race
+            # was with the fixture's timer rather than with Crystal's. A machine
+            # slow enough to take longer than the delay failed it either way.
             page.hover("#target", timeout: 5.seconds)
+            page.text_content("#result").should eq "hovered"
 
-            # Both moments come from the page's own clock, and the fixture
-            # records them for exactly this. Comparing elapsed time against a
-            # constant instead asserts how fast the machine is: this spec did,
-            # and CI failed it on a loaded macOS runner at 315 ms and again at
-            # 584 ms while the library was correct.
-            hovered = page.evaluate(Float64, "() => window.__hoveredAt")
-            enabled = page.evaluate(Float64, "() => window.__enabledAt ?? Infinity")
-            hovered.should be < enabled
+            # And the other half, which is what makes the first half mean
+            # something: the same element cannot be clicked.
+            expect_raises(Crystalwright::TimeoutError, /enabled/) do
+              page.click("#target", timeout: DOOMED_ACTION)
+            end
           end
         end
       end
