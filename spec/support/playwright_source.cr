@@ -10,9 +10,11 @@
 # shard itself has no Node.js in it at any stage, and this does not change that,
 # because what runs is the browser's own JavaScript engine on both sides.
 module PlaywrightSource
-  # Where `npm install playwright-core` tends to leave it. Override with
-  # `CRYSTALWRIGHT_PLAYWRIGHT_BUNDLE`.
-  DEFAULT_BUNDLE = "/Users/ivanrubyst/coding/a11y-probe/node_modules/playwright-core/lib/coreBundle.js"
+  # Where `npm install playwright-core` leaves it, relative to wherever that was
+  # run. Point `CRYSTALWRIGHT_PLAYWRIGHT_BUNDLE` at it directly when it lives
+  # somewhere else; without either, the differential spec is pending and nothing
+  # else notices.
+  DEFAULT_BUNDLE = "node_modules/playwright-core/lib/coreBundle.js"
 
   # Where the visibility functions begin and end inside the injected script.
   FIRST = "function getElementComputedStyle("

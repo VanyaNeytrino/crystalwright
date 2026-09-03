@@ -2,7 +2,7 @@ name: crystalwright
 version: 0.1.0
 
 authors:
-  - Ivan <vanya.neytrino@gmail.com>
+  - VanyaNeytrino <vanya.neytrino@gmail.com>
 
 description: |
   A Playwright-style browser automation API for Crystal, built on the Chrome

@@ -44,7 +44,8 @@ end
 # as this machine has cores, so ordinary load is not what broke it. The run that
 # failed needed a single round trip to stall for 1.9 s, which is a stall rather
 # than slowness. No constant survives an unbounded one, so this is headroom with
-# a number behind it, not a proof; the debt is recorded in `docs/NEXT.md`.
+# a number behind it rather than a proof, and raising it is not a fix for a spec
+# that starts failing here — the thing to find out is what stalled.
 DOOMED_ACTION = 5.seconds
 
 # Opens a browser and one tab, and always closes both.
