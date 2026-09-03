@@ -9,6 +9,12 @@
       // comparing a wall clock against a number. The page's own clock is the
       // only one that knows when the button became usable, and it does not care
       // how loaded the machine is.
+      // The same trick for hovering: the moment the pointer arrived, on the
+      // page's clock, so a spec can ask whether it arrived before the button
+      // became usable rather than whether it arrived quickly.
+      document.getElementById("target").addEventListener("mouseover", function () {
+        if (window.__hoveredAt === undefined) window.__hoveredAt = performance.now();
+      });
       document.getElementById("target").addEventListener("click", function () {
         window.__clickedAt = performance.now();
         document.getElementById("result").textContent = "clicked";

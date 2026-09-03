@@ -330,9 +330,16 @@ describe "actions", tags: "integration" do
             # Hovering a disabled control is ordinary: it is usually what shows
             # the tooltip explaining why it is disabled. So hover asks for
             # visible and stable, and click also asks for enabled.
-            started = Time.instant
             page.hover("#target", timeout: 5.seconds)
-            (Time.instant - started).should be < 300.milliseconds
+
+            # Both moments come from the page's own clock, and the fixture
+            # records them for exactly this. Comparing elapsed time against a
+            # constant instead asserts how fast the machine is: this spec did,
+            # and CI failed it on a loaded macOS runner at 315 ms and again at
+            # 584 ms while the library was correct.
+            hovered = page.evaluate(Float64, "() => window.__hoveredAt")
+            enabled = page.evaluate(Float64, "() => window.__enabledAt ?? Infinity")
+            hovered.should be < enabled
           end
         end
       end

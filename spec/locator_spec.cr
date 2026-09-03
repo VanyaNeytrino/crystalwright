@@ -40,11 +40,16 @@ describe Crystalwright::Locator, tags: "integration" do
 
             # Ambiguity will be just as true in thirty seconds, so retrying it
             # is only a way of taking longer to say the same thing.
+            # Only a clock can tell "refused at once" from "refused after
+            # retrying to the deadline", so the two are pulled as far apart as
+            # they go: thirty seconds to retry in, and ten to do one round trip.
+            # A machine slow enough to fail this has bigger problems than a
+            # strict-mode error.
             started = Time.instant
             expect_raises(Crystalwright::StrictModeError) do
-              page.locator("button.remove").click(timeout: 10.seconds)
+              page.locator("button.remove").click(timeout: 30.seconds)
             end
-            (Time.instant - started).should be < 3.seconds
+            (Time.instant - started).should be < 10.seconds
           end
         end
       end

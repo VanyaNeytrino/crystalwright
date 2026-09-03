@@ -97,7 +97,12 @@ describe "navigation", tags: "integration" do
             # document is not a second wait.
             started = Time.instant
             page.wait_for_load_state(Crystalwright::LoadState::NetworkIdle, 2.seconds)
-            (Time.instant - started).should be < 200.milliseconds
+
+            # Against this library's own quiet window rather than a number
+            # chosen by eye: unlatched, this call cannot return in less than the
+            # window, because that is what it would be waiting out. The machine
+            # would have to be five hundred times slower to confuse the two.
+            (Time.instant - started).should be < Crystalwright::NETWORK_IDLE_WINDOW
           end
         end
       end
@@ -199,8 +204,10 @@ describe "navigation", tags: "integration" do
 
             # Nothing was announced, so there is nothing to settle. A barrier
             # that waited out its grace period on every action would put a
-            # second on the clock for every click in a suite.
-            (Time.instant - started).should be < 500.milliseconds
+            # second on the clock for every click in a suite — so the bound is
+            # the grace period itself, which is the thing that would be waited
+            # out, rather than a number chosen by eye.
+            (Time.instant - started).should be < Crystalwright::SignalBarrier::GRACE
           end
         end
       end
