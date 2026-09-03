@@ -582,6 +582,7 @@ module Crystalwright
       @reached.clear
       retire_contexts_locked
       @accountant.restart(loader_id)
+      @manager.forget_abandoned(@id, loader_id)
     end
 
     # :nodoc:

@@ -72,9 +72,28 @@ module Crystalwright
       end
     end
 
-    # The tabs this object opened.
+    # The tabs that are open.
+    #
+    # Not the tabs ever opened: a closed one is removed here as it closes. The
+    # difference is not bookkeeping. Every `Page` holds a protocol session, a
+    # frame tree and the execution contexts under it, so a list that only ever
+    # grows pins all of that for as long as the browser lives — and a caller
+    # iterating this to act on its tabs would be handed dead ones. Fifty opened
+    # and closed in a row left fifty here.
     def pages : Array(Page)
       @mutex.synchronize { @pages.dup }
+    end
+
+    # :nodoc:
+    #
+    # A tab saying it has closed. Called from `Page#close`, which is the only
+    # place that knows it happened — a caller may close a tab directly rather
+    # than through the block form.
+    protected def forget(page : Page) : Nil
+      @mutex.synchronize do
+        @pages.delete(page)
+        @popups.delete(page)
+      end
     end
 
     # The cookies the browser is holding.

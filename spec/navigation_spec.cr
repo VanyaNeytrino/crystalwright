@@ -151,6 +151,16 @@ describe "navigation", tags: "integration" do
             page.goto(server.url("/quiet"), Crystalwright::LoadState::NetworkIdle, 8.seconds)
 
             page.text_content("p").should eq "nothing else to fetch"
+
+            # The tally is one of two structures keyed by request id; the other
+            # is the manager's map from request to frame. Both are cleaned up on
+            # completion, and a request nobody completes stays in both.
+            #
+            # Exactly zero, not "small". The page has reached network idle, so
+            # everything it asked for has finished and the only entry that could
+            # survive is the one `/hang` left behind. A loose bound here passed
+            # while the map leaked, which is what the mutation run is for.
+            page.frames_manager.tracked_requests.should eq 0
           end
         end
       end

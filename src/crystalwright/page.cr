@@ -496,6 +496,11 @@ module Crystalwright
       @session.execute(CDP::Protocol::Target::CloseTargetRequest.new(target_id: @target_id), timeout)
     rescue CDP::ProtocolError | CDP::SessionClosedError | CDP::ConnectionClosedError
       # The tab or the browser went first, which is the outcome asked for.
+    ensure
+      # In an `ensure`, because a tab that could not be closed politely is still
+      # not a tab any more, and leaving it on the browser's list would keep this
+      # object and everything under it alive for the rest of the session.
+      @browser.forget(self)
     end
 
     # Every execution context alive in the tab, across every frame.

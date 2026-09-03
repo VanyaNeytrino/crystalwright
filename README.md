@@ -340,7 +340,16 @@ crystal tool format --check && ./bin/ameba
 # Crystal 1.21 runs fibers at a parallelism of one unless told otherwise, so
 # this is the only run that can fail on a data race.
 CRYSTALWRIGHT_SPEC_PARALLEL=8 crystal spec
+
+# What only shows up after a while: five hundred navigations in one page, a
+# document that abandons a request on every load, fifty tabs opened and closed.
+# Minutes rather than seconds, so it is pending unless asked for.
+CRYSTALWRIGHT_SOAK=1 crystal spec spec/soak_spec.cr
 ```
+
+The soak specs are not a formality. A structure that grows by one entry per page
+is invisible for the length of an example and fatal for the length of a working
+day, and every example everywhere else in this suite finishes in under a second.
 
 The specs that drive a browser are tagged `integration` and CI runs them ten
 times in a row, because a browser test that fails one time in ten is a bug that

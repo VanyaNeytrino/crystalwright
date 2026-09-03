@@ -42,7 +42,11 @@ module Crystalwright
     @frames = {} of String => Frame
     @waiters = [] of Channel(Nil)
     @barriers = [] of SignalBarrier
-    @request_frames = {} of String => String
+    # Request id to the frame that asked and the document it asked for. The
+    # loader is here for the same reason it is in the accountant: a request the
+    # old document abandoned is never mentioned again, so nothing else will
+    # ever take this entry out.
+    @request_frames = {} of String => Tuple(String, String)
     @routes = [] of RouteHandler
     @resync_on_commit = false
     @main_frame : Frame?
@@ -305,7 +309,7 @@ module Crystalwright
               # A redirect arrives as a second event with the same request id
               # and a `redirectResponse`, and the pair completes once.
               continuation = !event.redirect_response.nil?
-              @request_frames[event.request_id] = frame_id unless continuation
+              @request_frames[event.request_id] = {frame_id, event.loader_id} unless continuation
               frame.accountant.started(event.request_id, event.loader_id, redirect_continuation: continuation)
             end
           end
@@ -409,11 +413,40 @@ module Crystalwright
       # The request went away with the page it belonged to.
     end
 
+    # :nodoc:
+    #
+    # How many requests this manager still has a frame recorded for.
+    #
+    # Exposed for the soak specs and for nothing else. "Bookkeeping is cleaned
+    # up" is otherwise a claim nobody can check, and the map this counts is
+    # written once per request for the life of the page.
+    def tracked_requests : Int32
+      @mutex.synchronize { @request_frames.size }
+    end
+
     private def finish(request_id : String) : Nil
       change do
-        frame_id = @request_frames.delete(request_id)
-        @frames[frame_id]?.try(&.accountant.finished(request_id)) if frame_id
+        if entry = @request_frames.delete(request_id)
+          @frames[entry[0]]?.try(&.accountant.finished(request_id))
+        end
       end
+    end
+
+    # :nodoc:
+    #
+    # Drops what this frame's previous document was still waiting for.
+    #
+    # The mirror of `NetworkAccountant#restart`, and needed for the same reason:
+    # Chrome never mentions an abandoned request again, so an entry made for one
+    # stays for the life of the page. Measured before it was fixed — thirty
+    # navigations that each abandoned one request left thirty-nine entries here
+    # while the tally itself sat at four.
+    #
+    # Only this frame's, and only the documents that are not the one committing:
+    # a sibling frame's requests belong to a loader of its own and are none of
+    # this commit's business.
+    protected def forget_abandoned(frame_id : String, loader_id : String) : Nil
+      @request_frames.reject! { |_, entry| entry[0] == frame_id && entry[1] != loader_id }
     end
 
     # ------------------------------------------------------------- plumbing --
