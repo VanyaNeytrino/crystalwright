@@ -214,7 +214,8 @@ module Crystalwright
 
     private def adopt_popup(session : CDP::Session, target_id : String, opener : String) : Nil
       page = Page.new(session, target_id, self, opener_target_id: opener)
-      page.start(10.seconds)
+      prime_frozen_target(session)
+      page.start(10.seconds, init_scripts_sent: true)
       page.resync_after_first_commit
       @mutex.synchronize { @popups << page; @pages << page }
     rescue error
@@ -225,6 +226,35 @@ module Crystalwright
       when @popup_bell.send(nil)
       else
       end
+    end
+
+    # Sends what a frozen tab needs, in order, and releases it — waiting for
+    # none of it.
+    #
+    # A tab held at `waitForDebuggerOnStart` in a renderer process of its own
+    # answers nothing until it runs. Measured: a tab opened by following a link
+    # with `target="_blank"` never replies to `Page.enable`, while one opened by
+    # `window.open` replies in twenty milliseconds — that one lives in the
+    # opener's process, where the agent is already running. So waiting for the
+    # first reply before releasing is a deadlock with itself, and it was one:
+    # every popup a real page opened by a link timed out, while every spec here
+    # used `window.open` and passed.
+    #
+    # The way out is the reference implementation's: send, do not wait, and let
+    # the protocol keep the order. A session processes commands in the order it
+    # receives them, so the init scripts are registered before the page's first
+    # statement even though nothing here waited to find out. `Page.start` then
+    # does the ordinary setup, and by the time it asks anything the tab is
+    # running and can answer.
+    private def prime_frozen_target(session : CDP::Session) : Nil
+      connection = @process.connection
+      id = session.id
+      connection.send_and_forget(id, "Page.enable")
+      init_scripts.each do |source|
+        connection.send_and_forget(id, "Page.addScriptToEvaluateOnNewDocument",
+          {source: source}.to_json)
+      end
+      connection.send_and_forget(id, "Runtime.runIfWaitingForDebugger")
     end
 
     private def release(session : CDP::Session) : Nil

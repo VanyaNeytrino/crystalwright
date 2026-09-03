@@ -381,6 +381,34 @@ module Crystalwright
       @mutex.synchronize { @resync_on_commit = true }
     end
 
+    # :nodoc:
+    #
+    # Believes the document about how far it has loaded.
+    #
+    # For a tab that was already running before anything here subscribed. A
+    # `load` that has already fired is not replayed, so a waiter for it waits
+    # for an event that is never coming — which is what an adopted popup is:
+    # it has to be released before it will answer a command, and by the time it
+    # answers, its short first document may be finished.
+    #
+    # `document.readyState` is the page's own account of the same three states,
+    # and it is the only one available after the fact. Only ever used to move
+    # forward: the events remain the source of truth for everything that
+    # happens from here on.
+    protected def seed_load_state(timeout : Time::Span) : Nil
+      state = @session.execute(CDP::Protocol::Runtime::EvaluateRequest.new(
+        expression: "document.readyState", return_by_value: true), timeout).result.value.try(&.as_s?)
+      return unless state
+
+      frame = main_frame
+      @mutex.synchronize do
+        frame.reach_locked(LoadState::Commit)
+        frame.reach_locked(LoadState::DOMContentLoaded) if state == "interactive" || state == "complete"
+        frame.reach_locked(LoadState::Load) if state == "complete"
+      end
+      ring
+    end
+
     private def watch_fetch : Nil
       @session.on(CDP::Protocol::Fetch::RequestPausedEvent) do |event|
         # The browser is holding this request open until somebody answers, and

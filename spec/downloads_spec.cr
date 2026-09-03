@@ -181,6 +181,36 @@ describe "downloads, pickers and popups", tags: "integration" do
         end
       end
 
+      it "catches one opened by following a link, not only by window.open" do
+        with_fixtures do |server|
+          Crystalwright.launch do |browser|
+            # The init script is registered here so that the ordering is under
+            # test too: for a tab that has to be released before it will answer
+            # anything, "send in order and do not wait" is the only way to have
+            # both, and getting it wrong loses one or the other.
+            browser.add_init_script("window.__marker = 'ours was first';")
+
+            browser.new_page do |page|
+              page.goto(server.url("/popup.html"))
+
+              # Every popup spec here used `window.open`, and that is the one
+              # shape that worked. A tab opened by following a link lives in a
+              # renderer process of its own, and a process of its own held at
+              # `waitForDebuggerOnStart` answers nothing at all until it is
+              # released — so setting it up before releasing it waited for a
+              # reply that could not come until the wait ended. Measured
+              # against a real site first, then reproduced here in 266 ms.
+              popup = page.expect_popup(15.seconds) { page.click("#go") }
+
+              popup.wait_for_load_state(Crystalwright::LoadState::Load, 10.seconds)
+              popup.url.should end_with "/popped.html"
+              popup.text_content("#who").should eq "the popup"
+              popup.evaluate(String, "() => window.__marker").should eq "ours was first"
+            end
+          end
+        end
+      end
+
       it "has its script in place before the page's first statement" do
         with_fixtures do |server|
           Crystalwright.launch do |browser|

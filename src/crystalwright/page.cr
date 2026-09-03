@@ -49,9 +49,21 @@ module Crystalwright
     end
 
     # :nodoc:
-    protected def start(timeout : Time::Span) : Nil
+    #
+    # `init_scripts_sent` is for a tab that was adopted rather than opened here.
+    # Such a tab is held at `waitForDebuggerOnStart`, and its init scripts have
+    # to be *sent* before it is released rather than registered after it starts,
+    # so `Browser` does that itself and says so here. Registering them twice is
+    # not harmless: a script that counts would count twice.
+    protected def start(timeout : Time::Span, init_scripts_sent : Bool = false) : Nil
       watch_dialogs
       @frames_manager.start(timeout)
+      if init_scripts_sent
+        # An adopted tab was already running before any of this was subscribed,
+        # so what it has already done has to be asked for rather than waited on.
+        @frames_manager.seed_load_state(timeout)
+        return
+      end
       @browser.init_scripts.each { |source| add_init_script(source, timeout) }
     end
 
