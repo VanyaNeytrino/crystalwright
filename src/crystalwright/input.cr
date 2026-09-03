@@ -87,14 +87,14 @@ module Crystalwright
     private def dispatch(type, x : Float64, y : Float64, button : MouseButton?,
                          click_count : Int32, progress : Progress?) : Nil
       pressed = @mutex.synchronize { @buttons.dup }
-      @session.execute(CDP::Protocol::Input::DispatchMouseEventRequest.new(
+      Crystalwright.command(@session, CDP::Protocol::Input::DispatchMouseEventRequest.new(
         type: type,
         x: x,
         y: y,
         button: (button || MouseButton::Left).to_protocol,
         buttons: pressed.sum { |held| held.left? ? 1 : held.right? ? 2 : 4 },
         click_count: click_count,
-      ), progress.try(&.remaining) || 5.seconds)
+      ), progress, "Input.dispatchMouseEvent")
     end
   end
 
@@ -137,8 +137,8 @@ module Crystalwright
     # Types text into whatever has focus.
     def type(text : String, progress : Progress? = nil) : Nil
       return if text.empty?
-      @session.execute(CDP::Protocol::Input::InsertTextRequest.new(text: text),
-        progress.try(&.remaining) || 5.seconds)
+      Crystalwright.command(@session, CDP::Protocol::Input::InsertTextRequest.new(text: text),
+        progress, "Input.insertText")
     end
 
     # Presses one key and releases it.
@@ -162,7 +162,7 @@ module Crystalwright
     end
 
     private def down(key : Key, progress : Progress?) : Nil
-      @session.execute(CDP::Protocol::Input::DispatchKeyEventRequest.new(
+      Crystalwright.command(@session, CDP::Protocol::Input::DispatchKeyEventRequest.new(
         type: key.text ? CDP::Protocol::Input::DispatchKeyEventRequestType::KeyDown : CDP::Protocol::Input::DispatchKeyEventRequestType::RawKeyDown,
         key: key.key,
         code: key.code,
@@ -170,17 +170,17 @@ module Crystalwright
         native_virtual_key_code: key.key_code,
         text: key.text,
         unmodified_text: key.text,
-      ), progress.try(&.remaining) || 5.seconds)
+      ), progress, "Input.dispatchKeyEvent")
     end
 
     private def up(key : Key, progress : Progress?) : Nil
-      @session.execute(CDP::Protocol::Input::DispatchKeyEventRequest.new(
+      Crystalwright.command(@session, CDP::Protocol::Input::DispatchKeyEventRequest.new(
         type: CDP::Protocol::Input::DispatchKeyEventRequestType::KeyUp,
         key: key.key,
         code: key.code,
         windows_virtual_key_code: key.key_code,
         native_virtual_key_code: key.key_code,
-      ), progress.try(&.remaining) || 5.seconds)
+      ), progress, "Input.dispatchKeyEvent")
     end
   end
 end

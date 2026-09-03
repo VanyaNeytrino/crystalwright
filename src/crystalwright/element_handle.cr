@@ -202,8 +202,8 @@ module Crystalwright
         return ActionOutcome.done
       end
 
-      @context.session.execute(CDP::Protocol::DOM::ScrollIntoViewIfNeededRequest.new(
-        object_id: @remote_object_id), progress.remaining)
+      Crystalwright.command(@context.session, CDP::Protocol::DOM::ScrollIntoViewIfNeededRequest.new(
+        object_id: @remote_object_id), progress, "DOM.scrollIntoViewIfNeeded")
       ActionOutcome.done
     rescue error : CDP::ProtocolError
       # "Node does not have a layout object" and friends: the element is not
@@ -220,8 +220,8 @@ module Crystalwright
     # rectangle enclosing both halves of a wrapped link has a middle that is on
     # neither half.
     protected def clickable_point(progress : Progress) : Point | ActionOutcome
-      quads = @context.session.execute(CDP::Protocol::DOM::GetContentQuadsRequest.new(
-        object_id: @remote_object_id), progress.remaining).quads
+      quads = Crystalwright.command(@context.session, CDP::Protocol::DOM::GetContentQuadsRequest.new(
+        object_id: @remote_object_id), progress, "DOM.getContentQuads").quads
       return ActionOutcome.new(ActionFailure::NotVisible) if quads.empty?
 
       viewport = @context.invoke("viewport", progress: progress)

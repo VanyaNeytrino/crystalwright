@@ -190,50 +190,44 @@ describe "actions", tags: "integration" do
         end
       end
 
-      it "names what it was asking when the deadline lands inside a round trip" do
+      it "keeps the shard below out of the failure, wherever the deadline lands" do
         with_fixtures do |server|
           with_page do |page|
             page.goto(server.url("/covered.html"))
 
-            # The budget is searched for rather than guessed. A deadline that
-            # expires *between* two round trips stops the log at a whole step,
-            # which is the ordinary case every other spec here covers; landing
-            # *inside* one needs a budget shorter than a single call, and how
-            # short that is belongs to the machine. So the loop grows the budget
-            # until it lands there, and the spec is about the shape of the
-            # message rather than about any number in it.
-            message = nil
+            # Every budget here is short enough that the deadline may land in
+            # the middle of a round trip rather than between two of them. Which
+            # round trip is the machine's business — a loaded one expires inside
+            # the first call of all, a quick one gets as far as dispatching the
+            # click — and that is exactly why the loop asserts the same thing at
+            # thirty different budgets instead of picking one.
+            #
+            # The assertion inside the loop is the whole point. A caller who
+            # gave `click` a deadline is promised this shard's `TimeoutError`,
+            # carrying the log of what was tried. `CDP::TimeoutError` from the
+            # shard below is a different type with no log in it, and it used to
+            # escape from any protocol call that was not the one call site that
+            # translated it: `DOM.scrollIntoViewIfNeeded` did, out of `click`.
+            # Seventeen consecutive green runs did not notice, and the
+            # eighteenth did.
+            named = nil
             30.times do |i|
               error = expect_raises(Crystalwright::TimeoutError) do
-                page.click("#target", timeout: (20 + i * 5).milliseconds)
+                page.click("#target", timeout: (2 + i * 4).milliseconds)
               end
               text = error.message.to_s
-              if text.includes?("running")
-                message = text
-                break
-              end
+              named ||= text if text.includes?("\n  running ")
             end
 
-            # This is the failure that went red once and could not be read: the
-            # log said which CDP method was busy and which internal world it
-            # was busy in, and nothing about what the library wanted. What a
-            # caller needs is the question, not the plumbing.
-            #
-            # Which step it lands in is the machine's business and not this
-            # spec's: a loaded one expires inside the very first call, a quick
-            # one gets as far as the actionability check. Naming the step here
-            # is how this spec went red on the second run of its own gate. What
-            # is guaranteed is the shape — some function of this shard's, in a
-            # world described rather than identified, and the protocol error
-            # kept rather than swallowed.
-            message.should_not be_nil
-            text = message.to_s
-            text.should match(/\n  running [A-Za-z]+ in the isolated world: Runtime\.callFunctionOn did not answer/)
-
-            # The world's name is generated per browser, so a message carrying
-            # it is a message that reads differently every run and can never be
-            # searched for twice.
-            text.should_not contain "__crystalwright_utility_"
+            # And when it does land inside a call, the log says which call. It
+            # used to name the CDP method and the internal world it was busy in
+            # — plumbing, and the world's name is generated per browser, so the
+            # message read differently every run and could not be searched for
+            # twice. Naming the step precisely is what this spec got wrong on
+            # its own first outing, so it asks only for the shape.
+            named.should_not be_nil
+            named.to_s.should match(/\n  running [A-Za-z.]+( in the isolated world)?: .+ did not answer/)
+            named.to_s.should_not contain "__crystalwright_utility_"
           end
         end
       end

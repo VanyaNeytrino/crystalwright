@@ -440,6 +440,14 @@ module Crystalwright
         return if outcome.done?
         progress.log("  #{outcome}")
       end
+    rescue error : CDP::TimeoutError
+      # Belt and braces over `Crystalwright.command`. Everything an attempt does
+      # is supposed to go through that and come back as this shard's own
+      # timeout, but "supposed to" is a property of every call site, and the one
+      # that did not was found by the gate rather than by reading. This is a
+      # property of the loop instead: a caller who gave `click` a deadline never
+      # sees the shard below, whatever a future attempt learns to call.
+      raise progress.timed_out(error.message)
     end
 
     # This frame's own JavaScript world, waiting for it if a navigation is in flight.
@@ -484,8 +492,8 @@ module Crystalwright
     protected def navigate(url : String, wait_until : LoadState, progress : Progress) : Nil
       check_attached!
 
-      response = @manager.session.execute(
-        CDP::Protocol::Page::NavigateRequest.new(url: url, frame_id: @id), progress.remaining)
+      response = Crystalwright.command(@manager.session,
+        CDP::Protocol::Page::NavigateRequest.new(url: url, frame_id: @id), progress, "Page.navigate")
 
       if failure = response.error_text
         raise Error.new("Navigating to #{url} failed: #{failure}")
