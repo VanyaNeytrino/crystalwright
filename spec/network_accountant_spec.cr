@@ -25,7 +25,7 @@ describe Crystalwright::NetworkAccountant do
     base = Time.instant
     accountant = Crystalwright::NetworkAccountant.new(window, now: base)
 
-    accountant.started("a")
+    accountant.started("a", "L")
     accountant.in_flight.should eq 1
     accountant.idle?(base + 1.hour).should be_false
     accountant.idle_in(base + 1.hour).should be_nil
@@ -35,8 +35,8 @@ describe Crystalwright::NetworkAccountant do
     base = Time.instant
     accountant = Crystalwright::NetworkAccountant.new(window, now: base)
 
-    accountant.started("a")
-    accountant.started("b")
+    accountant.started("a", "L")
+    accountant.started("b", "L")
     accountant.finished("a", base + 100.milliseconds)
 
     # One of two finished. Quiet has not begun.
@@ -55,8 +55,8 @@ describe Crystalwright::NetworkAccountant do
     # requestWillBeSent carrying the same id and a redirectResponse, and the
     # pair produces exactly one loadingFinished. Counting both leaves the tally
     # permanently one short of draining, so the page never goes quiet again.
-    accountant.started("same-id")
-    accountant.started("same-id", redirect_continuation: true)
+    accountant.started("same-id", "L")
+    accountant.started("same-id", "L", redirect_continuation: true)
     accountant.in_flight.should eq 1
 
     accountant.finished("same-id", base + 10.milliseconds)
@@ -71,7 +71,7 @@ describe Crystalwright::NetworkAccountant do
     # `loadingFailed` and `loadingFinished` are the same event to this: a
     # request that was refused is a request that is no longer in the air, and
     # waiting for a failed request to succeed is waiting forever.
-    accountant.started("doomed")
+    accountant.started("doomed", "L")
     accountant.finished("doomed", base)
     accountant.idle?(base + 500.milliseconds).should be_true
   end
@@ -80,7 +80,7 @@ describe Crystalwright::NetworkAccountant do
     base = Time.instant
     accountant = Crystalwright::NetworkAccountant.new(window, now: base)
 
-    accountant.started("known")
+    accountant.started("known", "L")
     accountant.finished("never-seen", base + 100.milliseconds)
 
     # The stray completion must not be taken for the real one.
@@ -95,11 +95,31 @@ describe Crystalwright::NetworkAccountant do
     # The commit lands between requestWillBeSent and loadingFinished for the
     # document itself. Emptying the set here would call the network quiet while
     # the page is still downloading.
-    accountant.started("the-document")
-    accountant.restart(base + 20.milliseconds)
+    accountant.started("the-document", "new-loader")
+    accountant.restart("new-loader", base + 20.milliseconds)
     accountant.in_flight.should eq 1
     accountant.idle?(base + 2.seconds).should be_false
 
+    accountant.finished("the-document", base + 100.milliseconds)
+    accountant.idle?(base + 600.milliseconds).should be_true
+  end
+
+  it "forgets what the abandoned document was still waiting for" do
+    base = Time.instant
+    accountant = Crystalwright::NetworkAccountant.new(window, now: base)
+
+    # The old document asked for something that will never arrive. Chrome does
+    # not report it as finished and does not report it as failed — measured,
+    # after a real page would not go idle — so nothing else will ever take it
+    # out of the tally. Keeping it makes `networkidle` unreachable for the rest
+    # of the frame's life, one navigation after the page that caused it.
+    accountant.started("orphan", "old-loader")
+    accountant.started("the-document", "new-loader")
+
+    accountant.restart("new-loader", base + 20.milliseconds)
+
+    # The committing document's own request survives; the orphan does not.
+    accountant.in_flight.should eq 1
     accountant.finished("the-document", base + 100.milliseconds)
     accountant.idle?(base + 600.milliseconds).should be_true
   end
@@ -114,7 +134,7 @@ describe Crystalwright::NetworkAccountant do
     accountant.idle_in(base + 400.milliseconds).should eq 100.milliseconds
     accountant.idle_in(base + 900.milliseconds).should eq Time::Span.zero
 
-    accountant.started("a")
+    accountant.started("a", "L")
     accountant.idle_in(base).should be_nil
   end
 end

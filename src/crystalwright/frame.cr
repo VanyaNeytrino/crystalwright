@@ -581,7 +581,7 @@ module Crystalwright
       @loader_id = loader_id
       @reached.clear
       retire_contexts_locked
-      @accountant.restart
+      @accountant.restart(loader_id)
     end
 
     # :nodoc:

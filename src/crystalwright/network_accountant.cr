@@ -18,7 +18,10 @@ module Crystalwright
     # How long the quiet has to last.
     getter window : Time::Span
 
-    @inflight = Set(String).new
+    # Request id to the loader whose document asked for it. A set would do for
+    # the tally; the loader is what makes a request attributable to a document
+    # that may since have been replaced.
+    @inflight = Hash(String, String).new
     @quiet_since : Time::Instant?
 
     def initialize(@window : Time::Span = NETWORK_IDLE_WINDOW, now : Time::Instant = Time.instant)
@@ -33,9 +36,9 @@ module Crystalwright
     # leaves the tally permanently one short of draining, so `networkidle`
     # never fires again for the life of the document — on any page with a
     # single redirect anywhere in it.
-    def started(request_id : String, redirect_continuation : Bool = false) : Nil
+    def started(request_id : String, loader_id : String, redirect_continuation : Bool = false) : Nil
       return if redirect_continuation
-      @inflight << request_id
+      @inflight[request_id] = loader_id
       @quiet_since = nil
     end
 
@@ -49,15 +52,26 @@ module Crystalwright
       @quiet_since = now if @inflight.empty?
     end
 
-    # Starts the clock again for a new document.
+    # Starts the clock again for a new document, and forgets the last one's.
     #
-    # The in-flight set is deliberately *not* emptied. The document's own
-    # request is still in the air when the frame commits — the commit arrives
-    # between `requestWillBeSent` and `loadingFinished` for it — so clearing
-    # here would declare the network quiet while the document is still
-    # downloading. Requests left over from the previous document drain on their
-    # own; Chrome reports the abandoned ones as `loadingFailed`.
-    def restart(now : Time::Instant = Time.instant) : Nil
+    # Not a plain clear, and not a plain keep. The committing document's own
+    # request is still in the air at this moment — the commit arrives between
+    # its `requestWillBeSent` and its `loadingFinished` — so emptying the tally
+    # would declare the network quiet while the page is still downloading. But
+    # keeping everything is worse, and it was what this did:
+    #
+    # **Chrome does not report a request the old document abandoned.** Measured,
+    # after a real site would not go idle: a `fetch()` still waiting on its
+    # response when the page navigates away produces no `loadingFinished` and no
+    # `loadingFailed`, ever. One of those and the frame's tally never drains
+    # again — `networkidle` is unreachable for the rest of the page's life, and
+    # the failure appears one navigation after the page that caused it.
+    #
+    # The loader is what tells the two apart. Everything the new document asked
+    # for already carries the new loader id, including its own main request, and
+    # everything the old one asked for carries the old.
+    def restart(loader_id : String, now : Time::Instant = Time.instant) : Nil
+      @inflight.reject! { |_, loader| loader != loader_id }
       @quiet_since = @inflight.empty? ? now : nil
     end
 

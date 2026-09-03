@@ -127,6 +127,33 @@ describe "navigation", tags: "integration" do
           end
         end
       end
+
+      it "goes quiet again after a document that left a request hanging" do
+        pages = {
+          "/leaky" => %(<!doctype html><title>leaky</title><script>fetch("/hang")</script>),
+          "/quiet" => %(<!doctype html><title>quiet</title><p>nothing else to fetch),
+        }
+        with_fixtures(pages) do |server|
+          with_page do |page|
+            page.goto(server.url("/leaky"))
+            eventually(message: "the leaky page never asked for /hang") do
+              server.request_count("/hang") == 1
+            end
+
+            # `/hang` never answers, and the page is now navigated away from the
+            # document that asked for it. Chrome then mentions that request
+            # again in neither direction — no `loadingFinished`, no
+            # `loadingFailed` — so a tally that keeps it never drains and this
+            # frame can never be idle again. Found on a real site, one
+            # navigation after the page that caused it, which is what makes it
+            # worth a fixture: there is nothing suspicious about the page that
+            # fails.
+            page.goto(server.url("/quiet"), Crystalwright::LoadState::NetworkIdle, 8.seconds)
+
+            page.text_content("p").should eq "nothing else to fetch"
+          end
+        end
+      end
     end
 
     describe "the navigation barrier" do

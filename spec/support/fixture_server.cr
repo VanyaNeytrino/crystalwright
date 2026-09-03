@@ -32,6 +32,12 @@ class FixtureServer
   @last_response_at : Time::Instant?
   @mutex = Sync::Mutex.new
 
+  # `/hang` waits on this and is released only by `close`. A `sleep` long enough
+  # to outlast a spec would also outlast the spec's teardown, and a fixture that
+  # keeps the suite alive after its example has finished is worse than the thing
+  # it is testing.
+  @hang = Channel(Nil).new
+
   # `pages` is an escape hatch for a one-off body a spec would rather write
   # inline than keep in a file. A path here wins over a file of the same name.
   def initialize(@pages : Hash(String, String) = {} of String => String)
@@ -80,8 +86,9 @@ class FixtureServer
     @mutex.synchronize { @last_response_at }
   end
 
-  # Stops serving.
+  # Stops serving, and releases anything waiting on `/hang`.
   def close : Nil
+    @hang.close
     @server.close
   rescue IO::Error
   end
@@ -93,6 +100,14 @@ class FixtureServer
       # the fixture, so it is a sleep here rather than in a spec.
       sleep((query["ms"]?.try(&.to_i?) || 0).milliseconds)
       slow_body(context, query)
+    when "/hang"
+      # Never answers. The point is a request that is still outstanding when the
+      # page navigates away from the document that asked for it — which Chrome
+      # then never mentions again, in either direction.
+      begin
+        @hang.receive
+      rescue Channel::ClosedError
+      end
     when "/poll"
       context.response.content_type = CONTENT_TYPES[".txt"]
       context.response.print("tick")

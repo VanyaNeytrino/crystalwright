@@ -306,7 +306,7 @@ module Crystalwright
               # and a `redirectResponse`, and the pair completes once.
               continuation = !event.redirect_response.nil?
               @request_frames[event.request_id] = frame_id unless continuation
-              frame.accountant.started(event.request_id, redirect_continuation: continuation)
+              frame.accountant.started(event.request_id, event.loader_id, redirect_continuation: continuation)
             end
           end
         end
