@@ -48,6 +48,14 @@ end
 # that starts failing here — the thing to find out is what stalled.
 DOOMED_ACTION = 5.seconds
 
+# The element a selector names, or a failure that says which selector.
+#
+# `not_nil!` would do the same thing and say nothing: "Nil assertion failed" in
+# a spec with fifteen queries in it is a message that costs a minute every time.
+def element_at(page : Crystalwright::Page, selector : String) : Crystalwright::ElementHandle
+  page.query_selector(selector) || raise "nothing matched #{selector.inspect}"
+end
+
 # Opens a browser and one tab, and always closes both.
 def with_page(&)
   Crystalwright.launch do |browser|

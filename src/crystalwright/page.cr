@@ -341,6 +341,29 @@ module Crystalwright
       main_frame.get_by_text(text, exact)
     end
 
+    # Elements by the role a screen reader would report, and optionally by the
+    # name it would read out.
+    #
+    # The closest thing here to how a person finds a control, and the reason it
+    # is worth the two computations behind it: `get_by_role("button", name:
+    # "Save")` keeps working when the markup under it changes, because what it
+    # names is what the button *is* rather than where it sits or what class
+    # somebody gave it.
+    #
+    # `name` matches case-insensitively as a substring unless `exact` is set,
+    # and is compared after the same whitespace flattening a screen reader
+    # applies. Hidden elements are excluded unless `include_hidden` is set —
+    # a name is still computed for them as though they were shown, so that
+    # "the button is there but hidden" is a thing that can be asked.
+    def get_by_role(role : String, exact : Bool = false, name : String? = nil,
+                    checked : (Bool | String)? = nil, disabled : Bool? = nil,
+                    expanded : Bool? = nil, level : Int32? = nil,
+                    pressed : (Bool | String)? = nil, selected : Bool? = nil,
+                    include_hidden : Bool = false) : Locator
+      main_frame.get_by_role(role, exact, name, checked, disabled, expanded,
+        level, pressed, selected, include_hidden)
+    end
+
     # A locator for elements carrying this `data-testid`.
     def get_by_test_id(id : String) : Locator
       main_frame.get_by_test_id(id)

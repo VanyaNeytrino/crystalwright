@@ -20,6 +20,27 @@ module PlaywrightSource
   FIRST = "function getElementComputedStyle("
   LAST  = "function elementSafeTagName("
 
+  # And where the ARIA half does. It starts much earlier than the visibility
+  # half and runs to the beginning of the snapshot machinery, which is a
+  # different feature.
+  #
+  # Why so early: the accessible name includes whatever CSS put in front of an
+  # element, and reading that means parsing the `content` property, which uses
+  # their CSS tokenizer. A slice that starts below it leaves that call throwing
+  # a `ReferenceError` into a `try` that swallows it — so the reference quietly
+  # reports no pseudo-element content at all, and every disagreement about it
+  # looks like a bug on this side. Measured: with the short slice the reference
+  # named a button "Beta" where the page reads "X Beta". Everything between is one region: the role table,
+  # the name algorithm, the state getters, and the caches they consult, which
+  # are declared inside it and therefore need nothing passed in.
+  #
+  # Both boundaries are function declarations rather than offsets, so a new
+  # release moves them without breaking this. When one of them stops existing
+  # the spec goes pending, which is the right failure: a differential test that
+  # cannot find the other implementation has nothing to say.
+  ARIA_FIRST = "var between = "
+  ARIA_LAST  = "var lastRef"
+
   # An expression that evaluates to Playwright's `isElementVisible`.
   #
   # Found by searching rather than by scanning. The injected script is stored in
@@ -62,6 +83,39 @@ module PlaywrightSource
       '#{body}\\nreturn isElementVisible;'
       );
       return build({}, undefined, undefined, undefined, undefined);
+      })()
+      JS
+  end
+
+  # An expression that evaluates to Playwright's own role and accessible-name
+  # computation, as `{ role, name }`.
+  #
+  # The point of having it is that "our `get_by_role` is correct" is otherwise
+  # an opinion. With this, agreement is a number: both implementations run in
+  # the same browser on the same elements, and every disagreement is a specific
+  # element with two specific answers.
+  def self.aria_expression : String?
+    path = ENV["CRYSTALWRIGHT_PLAYWRIGHT_BUNDLE"]? || DEFAULT_BUNDLE
+    return unless File.file?(path)
+
+    bundle = File.read(path)
+    literal = bundle.index("source4 = '")
+    return unless literal
+
+    first = bundle.index(ARIA_FIRST, literal)
+    return unless first
+    last = bundle.index(ARIA_LAST, first)
+    return unless last
+
+    body = bundle[first...last]
+
+    <<-JS
+      (() => {
+      const build = new Function(
+      "globalOptions",
+      '#{body}\\nreturn { role: getAriaRole, name: getElementAccessibleName, hidden: isElementHiddenForAria };'
+      );
+      return build({});
       })()
       JS
   end

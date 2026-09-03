@@ -1,0 +1,120 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>a corpus of roles and names</title>
+<style>
+  .off { display: none }
+  .invisible { visibility: hidden }
+  legend::before { content: "Before " }
+</style>
+
+<h1>Top heading</h1>
+<h2 id="h2">Second heading</h2>
+<h3 aria-level="5">Says three, claims five</h3>
+
+<a href="/somewhere">A link</a>
+<a name="anchor">Not a link, no href</a>
+<area href="/map" alt="An area">
+
+<button>Plain button</button>
+<button aria-label="Labelled by aria">Ignored content</button>
+<button aria-labelledby="h2">Labelled by another element</button>
+<button disabled>Disabled button</button>
+<button aria-disabled="true">Says disabled</button>
+<button aria-pressed="true">Pressed</button>
+<button aria-expanded="false">Collapsed</button>
+
+<input type="text" id="t1"><label for="t1">Text with a label</label>
+<label>Wrapping label <input type="text"></label>
+<input type="search" aria-label="Search me">
+<input type="checkbox" checked aria-label="A checked box">
+<input type="checkbox" aria-checked="mixed" aria-label="A mixed box">
+<input type="radio" aria-label="A radio">
+<input type="range" aria-label="A slider">
+<input type="number" aria-label="A spinner">
+<input type="submit" value="Submit me">
+<input type="button" value="A button input">
+<input type="file" aria-label="A file input">
+<input type="hidden" name="hidden">
+<input type="email" placeholder="Email placeholder">
+<input list="fruit" aria-label="With a datalist">
+<datalist id="fruit"><option>Apple</option></datalist>
+
+<textarea aria-label="A textarea"></textarea>
+<select aria-label="One choice"><option>One</option></select>
+<select multiple aria-label="Many choices"><option>Two</option></select>
+<progress aria-label="Progress"></progress>
+<meter aria-label="Meter"></meter>
+<output aria-label="Output"></output>
+
+<img src="data:," alt="An image">
+<img src="data:," alt="">
+<img src="data:," alt="" title="Titled anyway">
+<svg width="4" height="4" aria-label="A drawing"></svg>
+
+<ul><li>First item</li><li>Second item</li></ul>
+<ol><li>Ordered item</li></ol>
+<menu><li>Menu item</li></menu>
+<dl><dt>Term</dt><dd>Definition</dd></dl>
+
+<table>
+  <caption>A table caption</caption>
+  <thead><tr><th>Header one</th><th>Header two</th></tr></thead>
+  <tbody><tr><td>Cell one</td><td>Cell two</td></tr></tbody>
+  <tfoot><tr><td>Foot</td><td>Foot</td></tr></tfoot>
+</table>
+<table>
+  <tr><th scope="row">Row header</th><td>Data</td></tr>
+</table>
+
+<form aria-label="A named form"><p>In a form</p></form>
+<form><p>An unnamed form</p></form>
+<section aria-label="A named section"><p>In a section</p></section>
+<section><p>An unnamed section</p></section>
+<article><p>In an article</p></article>
+<aside><p>Aside</p></aside>
+<nav><a href="/n">Nav link</a></nav>
+<main><p>Main</p></main>
+<header><p>A banner</p></header>
+<footer><p>Content info</p></footer>
+<article><header><p>Not a banner, inside an article</p></header></article>
+<search><p>A search landmark</p></search>
+
+<fieldset>
+  <legend>The legend</legend>
+  <input type="text" aria-label="In a fieldset">
+</fieldset>
+<fieldset disabled>
+  <legend>Disabled fieldset</legend>
+  <input type="text" aria-label="In a disabled fieldset">
+</fieldset>
+
+<details><summary>Summary text</summary><p>Details body</p></details>
+<dialog open aria-label="A dialog"><p>Dialog body</p></dialog>
+
+<div role="button" tabindex="0">Div pretending to be a button</div>
+<div role="none">Div with role none</div>
+<div role="presentation" tabindex="0">Presentation with a tabindex</div>
+<button role="presentation" tabindex="0">Presentation on a button</button>
+<div role="checkbox" aria-checked="true">Custom checkbox</div>
+<div role="option" aria-selected="true">Selected option</div>
+<div role="treeitem" aria-expanded="true" aria-level="3">Tree item</div>
+<div role="not-a-real-role">Nonsense role</div>
+<div role="link button">Two roles, first wins</div>
+
+<p>A paragraph</p>
+<blockquote>A quote</blockquote>
+<code>some code</code>
+<em>emphasis</em>
+<strong>strong</strong>
+<mark>marked</mark>
+<sub>sub</sub><sup>sup</sup>
+<del>deleted</del><ins>inserted</ins>
+<hr>
+<figure><figcaption>A figure caption</figcaption></figure>
+
+<button class="off">Hidden by display none</button>
+<button class="invisible">Hidden by visibility</button>
+<button aria-hidden="true">Hidden from aria</button>
+<button title="Titled button"></button>
+<button><img src="data:," alt="Image inside a button"></button>
+<button>  Whitespace   around   </button>

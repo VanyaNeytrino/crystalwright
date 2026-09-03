@@ -28,6 +28,35 @@ module Crystalwright
       step("data-testid=#{id}")
     end
 
+    # `role=button[name="Save"i][checked]`
+    #
+    # Every value is written as JSON rather than pasted in, for the same reason
+    # every other builder here does: a button whose accessible name contains a
+    # quote or a `]` is a button with an awkward name, not a way to write a
+    # different selector.
+    def by_role(role : String, exact : Bool = false, name : String? = nil,
+                checked : (Bool | String)? = nil, disabled : Bool? = nil,
+                expanded : Bool? = nil, level : Int32? = nil,
+                pressed : (Bool | String)? = nil, selected : Bool? = nil,
+                include_hidden : Bool = false) : SelectorBuilder
+      body = String.build do |io|
+        io << role
+        if name
+          io << "[name=" << name.to_json
+          io << 'i' unless exact
+          io << ']'
+        end
+        io << "[checked=" << checked << ']' unless checked.nil?
+        io << "[disabled=" << disabled << ']' unless disabled.nil?
+        io << "[expanded=" << expanded << ']' unless expanded.nil?
+        io << "[level=" << level << ']' if level
+        io << "[pressed=" << pressed << ']' unless pressed.nil?
+        io << "[selected=" << selected << ']' unless selected.nil?
+        io << "[include-hidden=true]" if include_hidden
+      end
+      step("role=#{body}")
+    end
+
     def by_label(text : String | Regex, exact : Bool = false) : SelectorBuilder
       step("label=#{SelectorBuilder.body(text, exact)}")
     end
@@ -120,6 +149,29 @@ module Crystalwright
     # Elements carrying this `data-testid`.
     def get_by_test_id(id : String) : Locator
       rebuilt(builder.by_test_id(id))
+    end
+
+    # Elements by the role a screen reader would report, and optionally by the
+    # name it would read out.
+    #
+    # The closest thing here to how a person finds a control, and the reason it
+    # is worth the two computations behind it: `get_by_role("button", name:
+    # "Save")` keeps working when the markup under it changes, because what it
+    # names is what the button *is* rather than where it sits or what class
+    # somebody gave it.
+    #
+    # `name` matches case-insensitively as a substring unless `exact` is set,
+    # and is compared after the same whitespace flattening a screen reader
+    # applies. Hidden elements are excluded unless `include_hidden` is set —
+    # a name is still computed for them as though they were shown, so that
+    # "the button is there but hidden" is a thing that can be asked.
+    def get_by_role(role : String, exact : Bool = false, name : String? = nil,
+                    checked : (Bool | String)? = nil, disabled : Bool? = nil,
+                    expanded : Bool? = nil, level : Int32? = nil,
+                    pressed : (Bool | String)? = nil, selected : Bool? = nil,
+                    include_hidden : Bool = false) : Locator
+      rebuilt(builder.by_role(role, exact, name, checked, disabled, expanded,
+        level, pressed, selected, include_hidden))
     end
 
     # The control a `<label>` names, or an element with this `aria-label`.

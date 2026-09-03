@@ -57,6 +57,82 @@ describe "agreement with Playwright", tags: "integration" do
       end
     end
 
+    # And the same question for roles and names, which is where a `get_by_role`
+    # drifts. There is no shortcut here: a role is about seventy rules and a
+    # name is an algorithm with a visited set in it, and "nearly right" means a
+    # locator that finds the button on the page it was written against and
+    # stops finding it on the next one. Agreement is a number rather than an
+    # opinion, and the fixture is built to disagree.
+    it "agrees about the role and the name of every element on the roles fixture" do
+      aria = PlaywrightSource.aria_expression
+      next if aria.nil?
+
+      with_fixtures do |server|
+        with_page do |page|
+          page.goto(server.url("/roles.html"))
+          loaded = page.evaluate(
+            "(text) => { globalThis.__playwrightAria = eval(text); return typeof globalThis.__playwrightAria.role; }",
+            aria)
+          loaded.as_s.should eq "function"
+
+          theirs = page.evaluate(<<-JS).as_a
+            () => [...document.querySelectorAll("body *")].map((element) => {
+              const name = globalThis.__playwrightAria.name(element);
+              return {
+                role: globalThis.__playwrightAria.role(element) || "",
+                name: (name && name.text !== undefined) ? name.text : String(name),
+                hidden: globalThis.__playwrightAria.hidden(element),
+              };
+            })
+            JS
+          described = page.evaluate(<<-JS).as_a
+            () => [...document.querySelectorAll("body *")].map((element) =>
+              element.outerHTML.replace(/s+/g, " ").slice(0, 70))
+            JS
+
+          handles = page.query_selector_all("body *")
+          begin
+            roles = handles.map(&.aria_role.to_s)
+            names = handles.map(&.accessible_name)
+          ensure
+            handles.each(&.dispose)
+          end
+
+          handles.size.should eq theirs.size
+          handles.size.should be > 100
+
+          disagreements = [] of String
+          theirs.each_with_index do |expected, index|
+            unless expected["role"].as_s == roles[index]
+              disagreements << "role of #{described[index].as_s}: " \
+                               "ours=#{roles[index].inspect} playwright=#{expected["role"].as_s.inspect}"
+            end
+            unless expected["name"].as_s == names[index]
+              disagreements << "name of #{described[index].as_s}: " \
+                               "ours=#{names[index].inspect} playwright=#{expected["name"].as_s.inspect}"
+            end
+          end
+          disagreements.should eq [] of String
+
+          # And that the queries built on those two answers select the same
+          # elements. Roles and names agreeing element by element does not by
+          # itself mean `get_by_role` agrees: the hidden rule and the name
+          # comparison are its own.
+          theirs.map(&.["role"].as_s).reject(&.empty?).uniq!.each do |role|
+            visible = theirs.count { |e| e["role"].as_s == role && !e["hidden"].as_bool }
+            page.get_by_role(role).count.should eq visible
+          end
+
+          theirs.each do |element|
+            name = element["name"].as_s
+            role = element["role"].as_s
+            next if name.empty? || role.empty? || element["hidden"].as_bool
+            page.get_by_role(role, name: name, exact: true).count.should be > 0
+          end
+        end
+      end
+    end
+
     it "is asking a question that can come out either way" do
       with_fixtures do |server|
         with_page do |page|

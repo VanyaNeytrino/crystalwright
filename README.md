@@ -122,10 +122,41 @@ to go stale: it is a question, asked again at every use.
 
 ```crystal
 page.locator("#submit").click
+page.get_by_role("button", name: "Save changes").click
 page.get_by_text("Save changes").click
 page.get_by_label("Email").fill("someone@example.com")
 page.get_by_test_id("row").filter(has_text: "Ada").locator("button").click
 page.locator(".row").first.text_content
+```
+
+`get_by_role` is the one that survives a redesign, because it names what the
+control *is* rather than where it sits:
+
+```crystal
+page.get_by_role("button", name: "Save")           # substring, case-insensitive
+page.get_by_role("button", name: "Save", exact: true)
+page.get_by_role("heading", level: 2)
+page.get_by_role("checkbox", checked: true)
+page.get_by_role("button", disabled: true)
+page.get_by_role("option", selected: true)
+page.get_by_role("button", include_hidden: true)   # hidden ones too
+```
+
+The role is computed, not read off the element: an `<a>` with no `href` is not a
+link, a `<section>` is only a region once it has a name, an `<img alt="">` is
+decoration, a `<header>` inside an `<article>` is not the page's banner, and a
+`<th>` is a column header or a row header depending on its neighbours. The name
+is computed too — `aria-labelledby` first, then `aria-label`, then the native
+label, then the element's own text including whatever CSS put in front of it.
+
+Both are checked against Playwright's own implementation, element by element,
+on a fixture built to disagree. Ask about one element directly when a locator
+does not find what you expected:
+
+```crystal
+element = page.query_selector("#save").not_nil!
+element.aria_role          # => "button"
+element.accessible_name    # => "Save changes"
 ```
 
 Locators are **strict**: one that matches two elements is an error, not a silent
@@ -291,9 +322,6 @@ the page does.
 
 Deliberately, and worth knowing before you start:
 
-* **`get_by_role` and ARIA.** Computing an accessible name correctly is a large
-  piece of work, and a `get_by_role` that is nearly right is worse than none.
-  `aria-disabled` and `aria-readonly` are not honoured for the same reason.
 * **Cross-origin iframes.** Chrome puts one in its own process and does not
   report it to the parent at all, so `page.frame(...)` returns `nil` rather than
   something that hangs. Driving one needs a protocol session per frame.

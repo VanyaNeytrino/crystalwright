@@ -292,6 +292,30 @@ module Crystalwright
       {answer["matches"].as_bool, answer["received"].as_s}
     end
 
+    # The ARIA role a screen reader would report for this element, or `nil`.
+    #
+    # Public because "why did `get_by_role` not find this?" is a question a
+    # caller has to be able to answer without reading this shard's source. The
+    # answer is usually that the element's role is not the one it looks like:
+    # a `<section>` with no accessible name has no role at all, an `<img>` with
+    # an empty `alt` is presentational, and a `<th>` is a column header or a row
+    # header depending on its neighbours.
+    def aria_role(timeout : Time::Span? = nil) : String?
+      call("ariaRole", timeout).as_s?
+    end
+
+    # What a screen reader would read out for this element.
+    #
+    # Empty rather than `nil` when the element has no name: "unnamed" is an
+    # answer here, not a failure. `include_hidden` computes the name the element
+    # *would* have if it were shown, which is what a locator asking about a
+    # hidden element needs.
+    def accessible_name(include_hidden : Bool = false, timeout : Time::Span? = nil) : String
+      progress = Progress.new("accessible_name", timeout || DEFAULT_TIMEOUT)
+      guard
+      @context.invoke("accessibleName", self, include_hidden, progress: progress).as_s? || ""
+    end
+
     # The current value of an input, textarea, select or contenteditable.
     def value(timeout : Time::Span? = nil) : String?
       call("value", timeout).as_s?
