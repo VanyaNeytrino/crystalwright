@@ -47,6 +47,13 @@ module Crystalwright
     # old document abandoned is never mentioned again, so nothing else will
     # ever take this entry out.
     @request_frames = {} of String => Tuple(String, String)
+
+    # Set when the tab's renderer dies, cleared when it commits a document
+    # again. A crashed renderer answers nothing, so without this every call
+    # waits out its own deadline and then reports a timeout — measured before
+    # this existed, an `evaluate` on a crashed tab took the full thirty seconds
+    # to say nothing useful.
+    @crashed = false
     @routes = [] of RouteHandler
     @resync_on_commit = false
     @main_frame : Frame?
@@ -114,6 +121,7 @@ module Crystalwright
       begin
         loop do
           return if predicate.call
+          check_alive!
           raise progress.timed_out("waiting for #{what}") if progress.expired?
           progress.log("waiting for #{what}")
 
@@ -439,6 +447,43 @@ module Crystalwright
       route.continue
     rescue CDP::Error
       # The request went away with the page it belonged to.
+    end
+
+    # :nodoc:
+    #
+    # Called from `commit_locked`, which already holds the lock.
+    protected def recovered_locked : Nil
+      @crashed = false
+    end
+
+    # :nodoc:
+    #
+    # A navigation is starting, which is the one thing a crashed tab can still
+    # do: it gets a renderer again. Cleared here rather than at the commit
+    # because the wait for that commit runs through `wait_until`, which refuses
+    # to wait on a crashed page — so a flag cleared only at the commit makes the
+    # navigation that would clear it fail on its own way there.
+    protected def recovering! : Nil
+      @mutex.synchronize { @crashed = false }
+    end
+
+    # :nodoc:
+    #
+    # The tab's renderer died.
+    protected def crashed! : Nil
+      @mutex.synchronize { @crashed = true }
+      ring
+    end
+
+    # :nodoc:
+    #
+    # Raises if the renderer is gone.
+    #
+    # Recoverable rather than fatal: the tab survives and navigating it again
+    # starts a new renderer, which is why the flag is cleared at the next
+    # commit rather than for good.
+    def check_alive! : Nil
+      raise PageCrashedError.new if @mutex.synchronize { @crashed }
     end
 
     # :nodoc:

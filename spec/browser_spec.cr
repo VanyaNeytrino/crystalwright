@@ -1,5 +1,18 @@
 require "./spec_helper"
 
+# Whether the tab's renderer has been reported dead yet.
+#
+# The event arrives on its own fiber a moment after the navigation is refused,
+# so the spec waits for it rather than assuming the order.
+private def crashed?(page) : Bool
+  page.evaluate("() => 1", timeout: 1.second)
+  false
+rescue Crystalwright::PageCrashedError
+  true
+rescue Crystalwright::TimeoutError
+  false
+end
+
 describe "browser", tags: "integration" do
   describe "the list of tabs" do
     it "holds the ones that are open, not the ones that were" do
@@ -19,6 +32,37 @@ describe "browser", tags: "integration" do
           # and the contexts under it, so a closed one left here pins all of
           # that until the browser goes. The soak spec opens fifty.
           browser.pages.size.should eq 0
+        end
+      end
+    end
+
+    it "says the renderer crashed instead of waiting out every deadline" do
+      pages = {"/a" => %(<!doctype html><meta charset="utf-8"><p id="p">a)}
+      with_fixtures(pages) do |server|
+        # Its own browser: a crashed renderer is not something to leave lying
+        # around for the next example.
+        Crystalwright.launch do |browser|
+          browser.new_page do |page|
+            page.goto(server.url("/a"))
+
+            # Chrome's own way of crashing a tab on purpose. The navigation
+            # itself is refused — there is no document at the end of it.
+            expect_raises(Crystalwright::Error) { page.goto("chrome://crash", timeout: 5.seconds) }
+            eventually(message: "the crash was never reported") do
+              crashed?(page)
+            end
+
+            # A dead renderer answers nothing, so without noticing the crash
+            # every call waits out its own deadline and then reports a timeout
+            # — thirty seconds, measured, to say nothing useful.
+            expect_raises(Crystalwright::PageCrashedError) { page.evaluate("() => 1") }
+            expect_raises(Crystalwright::PageCrashedError) { page.click("#p", timeout: 5.seconds) }
+
+            # And the tab is not lost: navigating it gets a renderer again,
+            # which is why the crash is a state rather than a death sentence.
+            page.goto(server.url("/a"), timeout: 10.seconds)
+            page.text_content("#p").should eq "a"
+          end
         end
       end
     end

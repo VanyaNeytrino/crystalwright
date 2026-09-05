@@ -146,6 +146,9 @@ module Crystalwright
     # Evaluates in this frame's own world and copies the result out.
     def evaluate(source : String, *args, timeout : Time::Span? = nil) : JSValue
       progress = Progress.new("evaluate", timeout || DEFAULT_TIMEOUT)
+      # The contexts of a crashed renderer are still on record, so nothing here
+      # would wait for one: the call would go out and never be answered.
+      check_attached!
       main_world(progress).evaluate(source, *args, progress: progress)
     end
 
@@ -157,6 +160,7 @@ module Crystalwright
     # Evaluates in this frame's own world and leaves the result there.
     def evaluate_handle(source : String, *args, timeout : Time::Span? = nil) : JSHandle
       progress = Progress.new("evaluate_handle", timeout || DEFAULT_TIMEOUT)
+      check_attached!
       main_world(progress).evaluate_handle(source, *args, progress: progress)
     end
 
@@ -513,7 +517,11 @@ module Crystalwright
 
     # :nodoc:
     protected def navigate(url : String, wait_until : LoadState, progress : Progress) : Nil
-      check_attached!
+      # Detached, but deliberately not "crashed": navigating is how a crashed
+      # tab gets a renderer again, so refusing it here would make the crash
+      # permanent.
+      raise FrameDetachedError.new(describe) if detached?
+      @manager.recovering!
 
       response = Crystalwright.command(@manager.session,
         CDP::Protocol::Page::NavigateRequest.new(url: url, frame_id: @id), progress, "Page.navigate")
@@ -573,6 +581,7 @@ module Crystalwright
     # seconds later by default, having blocked for all of them.
     private def check_attached! : Nil
       raise FrameDetachedError.new(describe) if detached?
+      @manager.check_alive!
     end
 
     private def describe : String
@@ -606,6 +615,8 @@ module Crystalwright
       retire_contexts_locked
       @accountant.restart(loader_id)
       @manager.forget_abandoned(@id, loader_id)
+      # A document committing means a renderer is running again.
+      @manager.recovered_locked
     end
 
     # :nodoc:

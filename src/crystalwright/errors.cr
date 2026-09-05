@@ -62,6 +62,24 @@ module Crystalwright
   class StrictModeError < Error
   end
 
+  # The tab's renderer process died.
+  #
+  # Its own type for the same reason `FrameDetachedError` is: a timeout says
+  # "not yet, and I gave up" and this says "there is nothing there to answer".
+  # Without it a crashed page is indistinguishable from a slow one, and every
+  # call waits out its whole deadline to say nothing useful — measured before
+  # this existed, an `evaluate` on a crashed tab took the full thirty seconds
+  # and reported a timeout.
+  #
+  # The tab survives the crash: navigating it again starts a fresh renderer, so
+  # this is recoverable rather than fatal, and it says so.
+  class PageCrashedError < Error
+    def initialize
+      super("The page's renderer process crashed. Everything resolved in it is \
+             gone; navigating the tab again starts a new one.")
+    end
+  end
+
   # A value could not be moved across the JavaScript boundary.
   class SerializationError < Error
   end

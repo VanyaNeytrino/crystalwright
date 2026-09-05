@@ -57,6 +57,7 @@ module Crystalwright
     # not harmless: a script that counts would count twice.
     protected def start(timeout : Time::Span, init_scripts_sent : Bool = false) : Nil
       watch_dialogs
+      watch_crashes(timeout)
       @frames_manager.start(timeout)
       if init_scripts_sent
         # An adopted tab was already running before any of this was subscribed,
@@ -553,6 +554,19 @@ module Crystalwright
       when timeout(progress.remaining)
         raise progress.timed_out("waiting for #{what}")
       end
+    end
+
+    # A renderer that dies says so once, and then answers nothing.
+    #
+    # Subscribed before anything else is enabled, and the domain turned on
+    # afterwards, for the reason the frame manager writes down at length: a
+    # subscription installed after the event is a subscription that missed it.
+    private def watch_crashes(timeout : Time::Span) : Nil
+      @session.on(CDP::Protocol::Inspector::TargetCrashedEvent) do
+        Log.warn { "the page's renderer crashed" }
+        @frames_manager.crashed!
+      end
+      @session.execute(CDP::Protocol::Inspector::EnableRequest.new, timeout)
     end
 
     private def watch_dialogs : Nil

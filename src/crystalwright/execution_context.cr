@@ -109,7 +109,7 @@ module Crystalwright
       track_release
       return if destroyed?
       @session.execute(CDP::Protocol::Runtime::ReleaseObjectRequest.new(object_id: object_id), 5.seconds)
-    rescue CDP::ProtocolError | CDP::SessionClosedError | ContextDestroyedError
+    rescue CDP::ProtocolError | CDP::SessionClosedError | CDP::TimeoutError | ContextDestroyedError
       # The object is gone, which is what was being asked for. A page that
       # navigated has already released everything in the old document.
     end
@@ -118,7 +118,7 @@ module Crystalwright
     def dispose : Nil
       return if destroyed?
       @session.execute(CDP::Protocol::Runtime::ReleaseObjectGroupRequest.new(object_group: @object_group), 5.seconds)
-    rescue CDP::ProtocolError | CDP::SessionClosedError
+    rescue CDP::ProtocolError | CDP::SessionClosedError | CDP::TimeoutError
       # Same as above: nothing to release means nothing to do.
     end
 
