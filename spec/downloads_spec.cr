@@ -290,8 +290,12 @@ describe "the browser's other knobs", tags: "integration" do
       with_fixtures do |server|
         Crystalwright.launch do |browser|
           browser.new_page do |page|
-            page.goto(server.url("/plain.html"))
-            page.evaluate("() => { document.cookie = 'seen=yes; path=/'; return 1; }")
+            # The cookie arrives in a response header rather than from
+            # `document.cookie`. A cookie the page writes lives in the renderer
+            # first and reaches the browser process a moment later, so asking
+            # the browser for it straight afterwards is a race — one that CI
+            # lost on the seventh of ten runs.
+            page.goto(server.url("/set-cookie?name=seen&value=yes"))
 
             found = browser.cookies.find { |cookie| cookie.name == "seen" }
             found.should_not be_nil

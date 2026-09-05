@@ -100,6 +100,16 @@ class FixtureServer
       # the fixture, so it is a sleep here rather than in a spec.
       sleep((query["ms"]?.try(&.to_i?) || 0).milliseconds)
       slow_body(context, query)
+    when "/set-cookie"
+      # Set by the server rather than by the page, which is what makes a spec
+      # about the browser's cookie store deterministic: a cookie written with
+      # `document.cookie` lives in the renderer first and reaches the browser
+      # process a moment later, so asking the browser straight afterwards is a
+      # race. One arriving in a response header is already there.
+      name = query["name"]? || "seen"
+      context.response.headers["Set-Cookie"] = "#{name}=#{query["value"]? || "yes"}; Path=/"
+      context.response.content_type = CONTENT_TYPES[".html"]
+      context.response.print("<!doctype html><title>cookie</title><p>set")
     when "/hang"
       # Never answers. The point is a request that is still outstanding when the
       # page navigates away from the document that asked for it — which Chrome
