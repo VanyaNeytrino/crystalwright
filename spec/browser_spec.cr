@@ -45,12 +45,20 @@ describe "browser", tags: "integration" do
           browser.new_page do |page|
             page.goto(server.url("/a"))
 
-            # Chrome's own way of crashing a tab on purpose. The navigation
-            # itself is refused — there is no document at the end of it.
-            expect_raises(Crystalwright::Error) { page.goto("chrome://crash", timeout: 5.seconds) }
-            eventually(message: "the crash was never reported") do
-              crashed?(page)
+            # The protocol's own way of crashing a tab, sent through the raw
+            # session this shard deliberately leaves reachable. `chrome://crash`
+            # was the first attempt and it is not portable: on the Chromium the
+            # Linux runners install it produced no crash at all, and the spec
+            # failed for the wrong reason.
+            #
+            # The command never answers — the renderer it would answer from is
+            # what it destroys — so the timeout is the success case.
+            begin
+              page.session.execute_raw("Page.crash", timeout: 2.seconds)
+            rescue CDP::Error
             end
+
+            eventually(5.seconds, "the crash was never reported") { crashed?(page) }
 
             # A dead renderer answers nothing, so without noticing the crash
             # every call waits out its own deadline and then reports a timeout
