@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <head><title>counting</title></head>
+  <body>
+    <p id="visits"></p>
+    <script>
+      // Reloading has to actually fetch again rather than restore a rendered
+      // page, so the count lives on the server side of the wire.
+      const seen = Number(sessionStorage.getItem("seen") || "0") + 1;
+      sessionStorage.setItem("seen", String(seen));
+      document.getElementById("visits").textContent = "visit " + seen;
+    </script>
+  </body>
+</html>

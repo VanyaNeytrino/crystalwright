@@ -726,6 +726,16 @@
       const visible = isVisible(element);
       return { matches: state === "visible" ? visible : !visible, received: visible ? "visible" : "hidden" };
     }
+    if (state === "checked" || state === "unchecked") {
+      const checked = checkedState(element);
+      if (checked === "error") {
+        throw new Error(
+          "Element is not a checkbox, a radio, or anything with a role that can be checked."
+        );
+      }
+      const received = checked === "mixed" ? "mixed" : checked ? "checked" : "unchecked";
+      return { matches: received === state, received: received };
+    }
     if (state === "disabled" || state === "enabled") {
       const disabled = ariaDisabled(element);
       return { matches: state === "disabled" ? disabled : !disabled, received: disabled ? "disabled" : "enabled" };
@@ -1934,11 +1944,79 @@
     return found;
   }
 
+  // Whether a control is ticked, for the states a caller can wait on.
+  //
+  // Native first, then ARIA, the same order everything else here uses: an
+  // `<input type=checkbox>` answers from its own property, and a `<div
+  // role="checkbox">` from `aria-checked`. An element that is neither is not
+  // "unchecked" — it is not the kind of thing that can be, and saying so is
+  // what stops `check` from clicking a paragraph forever.
+  function checkedState(element) {
+    const tag = elementSafeTagName(element);
+    if (tag === "INPUT" && ["checkbox", "radio"].includes(element.type)) {
+      return element.indeterminate ? "mixed" : element.checked;
+    }
+    if (CHECKED_ROLES.includes(ariaRole(element) || "")) {
+      const attribute = element.getAttribute("aria-checked");
+      if (attribute === "true") return true;
+      if (attribute === "mixed") return "mixed";
+      return false;
+    }
+    return "error";
+  }
+
+  // Chooses among a `<select>`'s options.
+  //
+  // Matched by value, then by label, then by index — the three ways a person
+  // names an option, tried in that order because a value and a label can
+  // collide and the value is the one the form actually submits.
+  //
+  // The events are dispatched by hand because setting `selected` from script
+  // fires nothing, and a page that only listens for `change` would never learn
+  // that anything happened.
+  function selectOptions(node, wanted) {
+    const element = retarget(node, "follow-label");
+    if (!element || !element.isConnected) return { notConnected: true };
+    if (elementSafeTagName(element) !== "SELECT") {
+      return { error: "not a <select>: " + previewNode(element) };
+    }
+    if (isDisabled(element)) return { missingState: "enabled" };
+
+    const options = [...element.options];
+    const chosen = [];
+    for (const want of wanted) {
+      const found = options.find((option) => {
+        if (want.value !== undefined) return option.value === want.value;
+        if (want.label !== undefined) return option.label === want.label;
+        if (want.index !== undefined) return option.index === want.index;
+        return false;
+      });
+      if (!found) return { missing: JSON.stringify(want) };
+      if (found.disabled) return { missing: "a disabled option: " + JSON.stringify(want) };
+      chosen.push(found);
+    }
+    if (chosen.length > 1 && !element.multiple) {
+      return { error: "the <select> does not take more than one option" };
+    }
+
+    for (const option of options) option.selected = false;
+    for (const option of chosen) option.selected = true;
+
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return { done: true, values: chosen.map((option) => option.value) };
+  }
+
   const api = {
     // The role a screen reader would report, or null.
     ariaRole(node) {
       const element = retarget(node, "none");
       return element ? ariaRole(element) : null;
+    },
+
+    // Which options a `<select>` should be showing.
+    selectOptions(node, wanted) {
+      return selectOptions(node, wanted);
     },
 
     // What a screen reader would read out for this element.

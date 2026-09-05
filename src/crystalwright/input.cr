@@ -79,9 +79,17 @@ module Crystalwright
     def click(point : Point, button : MouseButton = MouseButton::Left, click_count : Int32 = 1,
               delay : Time::Span? = nil, progress : Progress? = nil) : Nil
       move(point.x, point.y, progress)
-      down(button, click_count, progress)
-      sleep(delay) if delay
-      up(button, click_count, progress)
+      # One press and release per count, with the count climbing, rather than a
+      # single press that claims to be the second. A `dblclick` event is what
+      # the browser synthesises after seeing a click of count 1 followed by one
+      # of count 2 in the same place — sending only the second produces two
+      # mouse events and no `dblclick` at all, which is a page that never opens
+      # its editor.
+      (1..click_count).each do |count|
+        down(button, count, progress)
+        sleep(delay) if delay
+        up(button, count, progress)
+      end
     end
 
     private def dispatch(type, x : Float64, y : Float64, button : MouseButton?,

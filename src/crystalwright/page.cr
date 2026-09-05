@@ -108,6 +108,31 @@ module Crystalwright
       main_frame.goto(url, wait_until, timeout)
     end
 
+    # Loads the current address again.
+    def reload(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
+      main_frame.reload(wait_until, timeout)
+    end
+
+    # Goes back one entry in this tab's history, or answers `false`.
+    def go_back(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
+      main_frame.go_back(wait_until, timeout)
+    end
+
+    # Goes forward one entry in this tab's history, or answers `false`.
+    def go_forward(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
+      main_frame.go_forward(wait_until, timeout)
+    end
+
+    # The document's title.
+    def title(timeout : Time::Span? = nil) : String
+      main_frame.title(timeout)
+    end
+
+    # The document as HTML, doctype included.
+    def content(timeout : Time::Span? = nil) : String
+      main_frame.content(timeout)
+    end
+
     # Waits until the main frame's current document has reached a state.
     def wait_for_load_state(state : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
       main_frame.wait_for_load_state(state, timeout)
@@ -414,6 +439,12 @@ module Crystalwright
       main_frame.click(selector, button, click_count, force, timeout)
     end
 
+    # Double-clicks the first element matching the selector.
+    def dblclick(selector : String, button : MouseButton = MouseButton::Left,
+                 force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
+      main_frame.dblclick(selector, button, force, timeout, strict)
+    end
+
     # Moves the pointer over the first element matching the selector.
     def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil) : Nil
       main_frame.hover(selector, force, timeout)
@@ -422,6 +453,25 @@ module Crystalwright
     # Replaces the contents of an input, textarea or contenteditable.
     def fill(selector : String, value : String, timeout : Time::Span? = nil) : Nil
       main_frame.fill(selector, value, timeout)
+    end
+
+    # Chooses among a `<select>`'s options, and answers what is selected.
+    def select_option(selector : String, value : String? = nil, label : String? = nil,
+                      index : Int32? = nil, values : Array(String)? = nil,
+                      timeout : Time::Span? = nil, strict : Bool = false) : Array(String)
+      main_frame.select_option(selector, value, label, index, values, timeout, strict)
+    end
+
+    # Ticks a checkbox or a radio, or leaves it ticked.
+    def check(selector : String, force : Bool = false, timeout : Time::Span? = nil,
+              strict : Bool = false) : Nil
+      main_frame.check(selector, force, timeout, strict)
+    end
+
+    # Unticks a checkbox or a radio, or leaves it unticked.
+    def uncheck(selector : String, force : Bool = false, timeout : Time::Span? = nil,
+                strict : Bool = false) : Nil
+      main_frame.uncheck(selector, force, timeout, strict)
     end
 
     # Focuses the first element matching the selector and presses one key.

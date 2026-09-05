@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>controls</title>
+
+<select id="one">
+  <option value="a">Alpha</option>
+  <option value="b">Bee</option>
+  <option value="c" disabled>Cee, disabled</option>
+</select>
+
+<select id="many" multiple>
+  <option value="x">Ex</option>
+  <option value="y">Why</option>
+</select>
+
+<select id="off" disabled><option value="z">Zed</option></select>
+
+<input type="checkbox" id="box">
+<label for="box">A box</label>
+
+<input type="checkbox" id="ticked" checked>
+<p id="clicks">0</p>
+<input type="radio" name="r" id="r1">
+<input type="radio" name="r" id="r2">
+
+<div role="checkbox" id="aria" aria-checked="false" tabindex="0">Aria box</div>
+<p id="notabox">Not a box at all</p>
+
+<div id="dbl">double me</div>
+<p id="log"></p>
+
+<script>
+  const log = document.getElementById("log");
+  const note = (text) => { log.textContent = (log.textContent + " " + text).trim(); };
+  const one = document.getElementById("one");
+  one.addEventListener("input", () => note("input"));
+  one.addEventListener("change", () => note("change:" + one.value));
+  const dbl = document.getElementById("dbl");
+  dbl.addEventListener("click", () => note("click"));
+  dbl.addEventListener("dblclick", () => note("dbl"));
+  // Counted so a spec can tell "left alone" from "clicked until it agreed":
+  // the retry loop re-reads the state after clicking, so a `check` that always
+  // clicks still converges on the right answer. Only the count shows the
+  // difference.
+  const clicks = document.getElementById("clicks");
+  document.getElementById("ticked").addEventListener("click", () => {
+    clicks.textContent = String(Number(clicks.textContent) + 1);
+  });
+  document.getElementById("aria").addEventListener("click", (e) => {
+    const on = e.target.getAttribute("aria-checked") === "true";
+    e.target.setAttribute("aria-checked", on ? "false" : "true");
+  });
+</script>

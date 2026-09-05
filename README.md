@@ -37,10 +37,28 @@ thing once a week.
 
 ```crystal
 page.click("#submit")
+page.dblclick("#row")
 page.fill("#email", "someone@example.com")
 page.hover("text=Account")
 page.press("#search", "Enter")
+page.check("#terms")
+page.uncheck("#newsletter")
+page.select_option("#country", "no")
+page.select_option("#country", label: "Norway")
+page.select_option("#tags", values: ["a", "b"])
 ```
+
+`check` and `uncheck` are not clicks: a click toggles, and a toggle is only what
+you meant if you already knew the state. They read it, act only if it is wrong,
+and read it again — because a click that lands on a label pointing at nothing
+leaves the box exactly as it was, and an implementation that stops after
+clicking would report success.
+
+`select_option` is not a click either. A native dropdown is drawn by the
+operating system and there is nothing on the page to aim at, so the selection is
+made in the document and `input` and `change` are dispatched by hand: setting
+`selected` from script fires neither, and a page listening for `change` would
+never learn anything happened.
 
 All of that is retried until it works or the deadline passes, and there is one
 deadline for the whole action rather than one per attempt — so a click that
@@ -61,6 +79,20 @@ retrying click on #target, attempt #2
 `force: true` skips the checks when you mean to click whatever is there.
 
 ## Navigation
+
+```crystal
+page.reload
+page.go_back        # => false when there is nowhere to go
+page.go_forward
+page.title          # => "Example Domain"
+page.content        # the html, doctype included
+```
+
+A page restored from the back/forward cache is not a new document: it sends no
+lifecycle events, because it loaded once already, and the script that builds
+this library's isolated world does not run again. Both are repaired when the
+restore is announced, so going back behaves like any other navigation instead of
+hanging for thirty seconds.
 
 `goto` waits for the document it asked for, and then for however far into
 loading you want to be:

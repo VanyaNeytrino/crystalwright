@@ -132,6 +132,60 @@ module Crystalwright
       navigate(url, wait_until, progress)
     end
 
+    # Loads the current address again.
+    #
+    # `Page.reload` answers with no loader id, unlike `Page.navigate`, so what
+    # is waited for is the frame committing a document that is not the one it
+    # had. Recorded before the command goes out, because the commit can arrive
+    # while it is still in flight.
+    def reload(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
+      progress = Progress.new("reload #{url}", timeout || DEFAULT_TIMEOUT)
+      renew(progress, wait_until) do
+        Crystalwright.command(@manager.session,
+          CDP::Protocol::Page::ReloadRequest.new, progress, "Page.reload")
+      end
+    end
+
+    # Goes back one entry in this tab's history.
+    #
+    # Answers `false` when there is nowhere to go, rather than raising: "was
+    # there a previous page" is a question with two ordinary answers, and a
+    # caller that has to rescue an exception to find out is a caller writing
+    # `begin` around a boolean.
+    def go_back(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
+      history_step(-1, wait_until, timeout || DEFAULT_TIMEOUT, "go_back")
+    end
+
+    # Goes forward one entry in this tab's history.
+    def go_forward(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
+      history_step(1, wait_until, timeout || DEFAULT_TIMEOUT, "go_forward")
+    end
+
+    # The document's title.
+    def title(timeout : Time::Span? = nil) : String
+      evaluate_in_utility(String, "() => document.title", timeout: timeout)
+    end
+
+    # The document as HTML, doctype included.
+    #
+    # Serialised by the browser rather than assembled here: `outerHTML` on the
+    # root element leaves out the doctype, and a page whose doctype is missing
+    # renders differently from one where it was merely not reported.
+    def content(timeout : Time::Span? = nil) : String
+      evaluate_in_utility(String, <<-JS, timeout: timeout)
+        () => {
+          const doctype = document.doctype;
+          const prologue = doctype
+            ? "<!DOCTYPE " + doctype.name +
+              (doctype.publicId ? ' PUBLIC "' + doctype.publicId + '"' : "") +
+              (!doctype.publicId && doctype.systemId ? " SYSTEM" : "") +
+              (doctype.systemId ? ' "' + doctype.systemId + '"' : "") + ">"
+            : "";
+          return prologue + (document.documentElement ? document.documentElement.outerHTML : "");
+        }
+        JS
+    end
+
     # Waits until the current document has reached a state.
     #
     # Returns at once if it already has. That is not an optimisation: after a
@@ -326,6 +380,15 @@ module Crystalwright
       end
     end
 
+    # Double-clicks the first element matching the selector.
+    def dblclick(selector : String, button : MouseButton = MouseButton::Left,
+                 force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
+      progress = Progress.new("dblclick #{selector}", timeout || DEFAULT_TIMEOUT)
+      pointer_action(selector, "dblclick", progress, wait_for_enabled: true, force: force, strict: strict) do |point|
+        @manager.mouse.click(point, button, 2, progress: progress)
+      end
+    end
+
     # Moves the pointer over the first element matching the selector.
     #
     # Does not wait for it to be enabled: hovering a disabled control is a
@@ -365,6 +428,77 @@ module Crystalwright
           element.dispose
         end
       end
+    end
+
+    # Chooses among a `<select>`'s options, and answers what is selected.
+    #
+    # An option is named by its value, its label, or its position, in that
+    # order of preference: a value and a label can be the same string and the
+    # value is the one the form submits. `values` selects several, which only a
+    # `<select multiple>` will accept.
+    #
+    # Not a click: a native dropdown is drawn by the operating system and there
+    # is nothing on the page to aim at. The selection is made in the document
+    # and the `input` and `change` events are dispatched by hand, because
+    # setting `selected` from script fires neither and a page listening for
+    # `change` would never learn anything happened.
+    def select_option(selector : String, value : String? = nil, label : String? = nil,
+                      index : Int32? = nil, values : Array(String)? = nil,
+                      timeout : Time::Span? = nil, strict : Bool = false) : Array(String)
+      wanted = [] of Hash(String, JSON::Any)
+      values.try(&.each { |v| wanted << {"value" => JSON::Any.new(v)} })
+      wanted << {"value" => JSON::Any.new(value)} if value
+      wanted << {"label" => JSON::Any.new(label)} if label
+      wanted << {"index" => JSON::Any.new(index.to_i64)} if index
+      raise Error.new("select_option needs a value, a label, an index or values") if wanted.empty?
+
+      progress = Progress.new("select_option #{selector}", timeout || DEFAULT_TIMEOUT)
+      chosen = [] of String
+
+      retry_action(progress, "select_option #{selector}") do |_|
+        element = resolve(selector, progress, strict)
+        next ActionOutcome.new(ActionFailure::NotConnected) unless element
+
+        begin
+          answer = element.select_options(wanted, progress)
+          if problem = answer["error"]?.try(&.as_s?)
+            raise Error.new("#{problem} — select_option only works on a <select>")
+          end
+          if missing = answer["missing"]?.try(&.as_s?)
+            # Retried rather than raised: an option a script has not added yet
+            # is the same kind of "not yet" as an element that has not appeared.
+            next ActionOutcome.new(ActionFailure::NotFound, "no such option: #{missing}")
+          end
+          next ActionOutcome.new(ActionFailure::NotConnected) if answer["notConnected"]?.try(&.as_bool?)
+          if state = answer["missingState"]?.try(&.as_s?)
+            next ActionOutcome.new(ActionFailure::MissingState, state)
+          end
+
+          chosen = answer["values"]?.try(&.as_a?.try(&.map(&.as_s))) || [] of String
+          ActionOutcome.done
+        ensure
+          element.dispose
+        end
+      end
+
+      chosen
+    end
+
+    # Ticks a checkbox or a radio, or leaves it ticked.
+    #
+    # Idempotent on purpose: a test that says "make sure this is on" should not
+    # turn it off because it was already on. That is also why this is not the
+    # same as clicking — a click toggles, and a toggle is only what you wanted
+    # if you already knew the state.
+    def check(selector : String, force : Bool = false, timeout : Time::Span? = nil,
+              strict : Bool = false) : Nil
+      set_checked(selector, true, force, timeout, strict)
+    end
+
+    # Unticks a checkbox or a radio, or leaves it unticked.
+    def uncheck(selector : String, force : Bool = false, timeout : Time::Span? = nil,
+                strict : Bool = false) : Nil
+      set_checked(selector, false, force, timeout, strict)
     end
 
     # Focuses the first element matching the selector and presses one key.
@@ -513,6 +647,80 @@ module Crystalwright
     private def no_match(selector : String) : Error
       Error.new("No element matched #{selector.inspect} in #{describe}. Use \
                  wait_for_selector if it is expected to appear later.")
+    end
+
+    # The shared half of `check` and `uncheck`.
+    #
+    # Reads the state, clicks only if it is wrong, and reads it again. The
+    # second read is the part that matters: a click that lands on a label whose
+    # `for` points at nothing, or on a control a script re-renders underneath
+    # it, leaves the box exactly as it was — and an implementation that stops
+    # after clicking reports success for a checkbox it never ticked.
+    private def set_checked(selector : String, wanted : Bool, force : Bool,
+                            timeout : Time::Span?, strict : Bool) : Nil
+      what = wanted ? "check" : "uncheck"
+      progress = Progress.new("#{what} #{selector}", timeout || DEFAULT_TIMEOUT)
+      state = wanted ? "checked" : "unchecked"
+
+      retry_action(progress, "#{what} #{selector}") do |attempt|
+        element = resolve(selector, progress, strict)
+        next ActionOutcome.new(ActionFailure::NotConnected) unless element
+
+        begin
+          next ActionOutcome.done if element.state(state)[0]
+
+          outcome = attempt_pointer(element, what, progress, attempt, true, force,
+            ->(point : Point) { @manager.mouse.click(point, MouseButton::Left, 1, progress: progress) })
+          next outcome unless outcome.done?
+
+          matched, received = element.state(state)
+          next ActionOutcome.done if matched
+          ActionOutcome.new(ActionFailure::MissingState,
+            "it was clicked and is still #{received}")
+        ensure
+          element.dispose
+        end
+      end
+    end
+
+    # Runs something that replaces the document, and waits for the replacement.
+    #
+    # The loader the frame is showing is read *before* the command is sent: the
+    # commit can arrive while the command is still in flight, and a version that
+    # reads it afterwards can wait for a document that has already arrived.
+    private def renew(progress : Progress, wait_until : LoadState, &) : Nil
+      raise FrameDetachedError.new(describe) if detached?
+      @manager.recovering!
+      before = loader_id
+
+      yield
+
+      @manager.wait_until(progress, "a new document to commit") { loader_id != before }
+      await_state(wait_until, progress)
+    end
+
+    private def history_step(offset : Int32, wait_until : LoadState,
+                             timeout : Time::Span, what : String) : Bool
+      progress = Progress.new(what, timeout)
+      history = Crystalwright.command(@manager.session,
+        CDP::Protocol::Page::GetNavigationHistoryRequest.new, progress,
+        "Page.getNavigationHistory")
+
+      wanted = history.current_index + offset
+      return false if wanted < 0 || wanted >= history.entries.size
+
+      entry = history.entries[wanted]
+      raise FrameDetachedError.new(describe) if detached?
+      @manager.recovering!
+      before = loader_id
+
+      Crystalwright.command(@manager.session,
+        CDP::Protocol::Page::NavigateToHistoryEntryRequest.new(entry_id: entry.id),
+        progress, "Page.navigateToHistoryEntry")
+
+      @manager.wait_until(progress, "a new document to commit") { loader_id != before }
+      await_state(wait_until, progress)
+      true
     end
 
     # :nodoc:

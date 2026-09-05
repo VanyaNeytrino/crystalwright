@@ -67,6 +67,11 @@ module Crystalwright
 
     # Something else would receive the click — `detail` names it.
     HitTarget
+
+    # What was asked for is not on the page yet — `detail` says what. Distinct
+    # from a missing state: the element is there and fine, and the thing named
+    # inside it is what has not appeared, which a script may still add.
+    NotFound
   end
 
   # What one attempt at an action came to.
@@ -98,6 +103,7 @@ module Crystalwright
       in ActionFailure::NotInViewport then io << "the element is outside the viewport"
       in ActionFailure::MissingState  then io << "the element is not " << (@detail || "ready")
       in ActionFailure::HitTarget     then io << (@detail || "something else") << " intercepts pointer events"
+      in ActionFailure::NotFound      then io << (@detail || "what was asked for") << " is not there"
       end
     end
   end
@@ -314,6 +320,11 @@ module Crystalwright
       progress = Progress.new("accessible_name", timeout || DEFAULT_TIMEOUT)
       guard
       @context.invoke("accessibleName", self, include_hidden, progress: progress).as_s? || ""
+    end
+
+    # :nodoc:
+    protected def select_options(wanted : Array(Hash(String, JSON::Any)), progress : Progress) : JSValue
+      @context.invoke("selectOptions", self, wanted, progress: progress)
     end
 
     # The current value of an input, textarea, select or contenteditable.

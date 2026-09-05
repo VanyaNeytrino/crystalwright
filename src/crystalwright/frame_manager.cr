@@ -216,6 +216,29 @@ module Crystalwright
         end
         spawn(name: "resync") { resync_contexts } if resync
 
+        # A page restored from the back/forward cache is not a new document,
+        # and two things follow from that. No lifecycle events are sent, because
+        # it already loaded once and the browser will not say so twice — so a
+        # waiter for `load` waits for good. And the script that makes the
+        # isolated world runs on new documents only, so the world this shard
+        # works in does not exist any more: every selector would wait for it.
+        #
+        # Both are repaired here rather than in `go_back`, because a page can
+        # call `history.back()` itself and nothing on this side would know.
+        if event.type.back_forward_cache_restore? && info.parent_id.nil?
+          spawn(name: "restore") do
+            create_isolated_world(info.id, 10.seconds)
+            # And then ask for the contexts rather than waiting to be told.
+            # Creating the world does not produce an `executionContextCreated`
+            # that arrives here — measured, the frame still had none afterwards
+            # — which is the same silence a popup's first document keeps, and
+            # it has the same answer: the agent replays everything when it is
+            # turned off and on again.
+            resync_contexts
+            seed_load_state(10.seconds)
+          end
+        end
+
         change do
           frame = upsert_locked(info.id, info.parent_id)
 
@@ -403,7 +426,7 @@ module Crystalwright
     # and it is the only one available after the fact. Only ever used to move
     # forward: the events remain the source of truth for everything that
     # happens from here on.
-    protected def seed_load_state(timeout : Time::Span) : Nil
+    def seed_load_state(timeout : Time::Span) : Nil
       state = @session.execute(CDP::Protocol::Runtime::EvaluateRequest.new(
         expression: "document.readyState", return_by_value: true), timeout).result.value.try(&.as_s?)
       return unless state
