@@ -350,6 +350,31 @@ A popup is held still before its own first statement, configured, and only then
 released — so `browser.add_init_script` is genuinely in place before anything
 the page does.
 
+## What the page says
+
+```crystal
+page.on_console { |message| puts message }          # [error] Cannot read ... (app.js:41)
+page.on_page_error { |error| failures << error }    # an exception nobody caught
+```
+
+The single most useful thing to have when a test fails on somebody else's
+machine. Arguments are rendered the way a console renders them — an object shows
+what is in it rather than the word `Object` — and nothing is kept alive: a
+subscription that held a handle per argument would pin the page's memory for as
+long as it lived.
+
+## Timeouts
+
+Thirty seconds by default, which is right for a person watching and wrong for a
+suite on a runner at half the speed. One setting covers the tab and every frame
+in it; an explicit timeout always wins.
+
+```crystal
+page.default_timeout = 5.seconds
+page.click("#submit")                    # five seconds
+page.click("#submit", timeout: 1.minute) # one minute
+```
+
 ## Not here
 
 Deliberately, and worth knowing before you start:

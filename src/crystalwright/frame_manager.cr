@@ -54,6 +54,13 @@ module Crystalwright
     # this existed, an `evaluate` on a crashed tab took the full thirty seconds
     # to say nothing useful.
     @crashed = false
+
+    # How long an operation in this tab gets when the caller does not say.
+    #
+    # On the manager rather than on `Page` because a `Frame` needs it too, and
+    # every frame in a tab shares one: a suite that raises the default because
+    # its CI is slow means all of it, not the main frame only.
+    @default_timeout = DEFAULT_TIMEOUT
     @routes = [] of RouteHandler
     @resync_on_commit = false
     @main_frame : Frame?
@@ -488,6 +495,16 @@ module Crystalwright
     # navigation that would clear it fail on its own way there.
     protected def recovering! : Nil
       @mutex.synchronize { @crashed = false }
+    end
+
+    # :nodoc:
+    def default_timeout : Time::Span
+      @mutex.synchronize { @default_timeout }
+    end
+
+    # :nodoc:
+    def default_timeout=(span : Time::Span) : Nil
+      @mutex.synchronize { @default_timeout = span }
     end
 
     # :nodoc:

@@ -128,7 +128,7 @@ module Crystalwright
     # `Load` is the default because it is what "the page is up" means to most
     # people; `NetworkIdle` is available and is ours, not Chrome's.
     def goto(url : String, wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
-      progress = Progress.new("goto #{url}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("goto #{url}", timeout || default_timeout)
       navigate(url, wait_until, progress)
     end
 
@@ -139,7 +139,7 @@ module Crystalwright
     # had. Recorded before the command goes out, because the commit can arrive
     # while it is still in flight.
     def reload(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
-      progress = Progress.new("reload #{url}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("reload #{url}", timeout || default_timeout)
       renew(progress, wait_until) do
         Crystalwright.command(@manager.session,
           CDP::Protocol::Page::ReloadRequest.new, progress, "Page.reload")
@@ -153,12 +153,12 @@ module Crystalwright
     # caller that has to rescue an exception to find out is a caller writing
     # `begin` around a boolean.
     def go_back(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
-      history_step(-1, wait_until, timeout || DEFAULT_TIMEOUT, "go_back")
+      history_step(-1, wait_until, timeout || default_timeout, "go_back")
     end
 
     # Goes forward one entry in this tab's history.
     def go_forward(wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Bool
-      history_step(1, wait_until, timeout || DEFAULT_TIMEOUT, "go_forward")
+      history_step(1, wait_until, timeout || default_timeout, "go_forward")
     end
 
     # The document's title.
@@ -193,13 +193,13 @@ module Crystalwright
     # going to fire again, so an implementation that always waits for the event
     # hangs on every single-page application.
     def wait_for_load_state(state : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
-      progress = Progress.new("wait_for_load_state #{state}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("wait_for_load_state #{state}", timeout || default_timeout)
       await_state(state, progress)
     end
 
     # Evaluates in this frame's own world and copies the result out.
     def evaluate(source : String, *args, timeout : Time::Span? = nil) : JSValue
-      progress = Progress.new("evaluate", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("evaluate", timeout || default_timeout)
       # The contexts of a crashed renderer are still on record, so nothing here
       # would wait for one: the call would go out and never be answered.
       check_attached!
@@ -213,14 +213,14 @@ module Crystalwright
 
     # Evaluates in this frame's own world and leaves the result there.
     def evaluate_handle(source : String, *args, timeout : Time::Span? = nil) : JSHandle
-      progress = Progress.new("evaluate_handle", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("evaluate_handle", timeout || default_timeout)
       check_attached!
       main_world(progress).evaluate_handle(source, *args, progress: progress)
     end
 
     # Evaluates in the isolated world this library works in.
     def evaluate_in_utility(source : String, *args, timeout : Time::Span? = nil) : JSValue
-      progress = Progress.new("evaluate", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("evaluate", timeout || default_timeout)
       utility_world(progress).evaluate(source, *args, progress: progress)
     end
 
@@ -297,12 +297,12 @@ module Crystalwright
     # element yet gets `nil`, which is a fact about right now. Waiting for it to
     # appear is `wait_for_selector`, and it is a different question.
     def query_selector(selector : String, timeout : Time::Span? = nil) : ElementHandle?
-      resolve(selector, Progress.new("query_selector #{selector}", timeout || DEFAULT_TIMEOUT))
+      resolve(selector, Progress.new("query_selector #{selector}", timeout || default_timeout))
     end
 
     # Every element in this frame matching the selector.
     def query_selector_all(selector : String, timeout : Time::Span? = nil) : Array(ElementHandle)
-      progress = Progress.new("query_selector_all #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("query_selector_all #{selector}", timeout || default_timeout)
       utility_world(progress).invoke_elements("querySelectorAll", selector, nil, progress: progress)
     end
 
@@ -317,7 +317,7 @@ module Crystalwright
     # one that waits for a condition it can name fails only when the condition
     # is genuinely never met, and then says which one it was.
     def wait_for_selector(selector : String, state : ElementState = ElementState::Visible, timeout : Time::Span? = nil) : ElementHandle?
-      progress = Progress.new("wait_for_selector #{selector} #{state.to_wire}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("wait_for_selector #{selector} #{state.to_wire}", timeout || default_timeout)
       wanted = state.to_wire
 
       # Polled rather than pushed. Nothing in the protocol fires when an element
@@ -340,7 +340,7 @@ module Crystalwright
 
     # The text of the first element matching the selector.
     def text_content(selector : String, timeout : Time::Span? = nil) : String?
-      progress = Progress.new("text_content #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("text_content #{selector}", timeout || default_timeout)
       element = resolve(selector, progress)
       raise no_match(selector) unless element
       begin
@@ -374,7 +374,7 @@ module Crystalwright
     # on top of it, and keeps checking while the events are in flight.
     def click(selector : String, button : MouseButton = MouseButton::Left, click_count : Int32 = 1,
               force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
-      progress = Progress.new("click #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("click #{selector}", timeout || default_timeout)
       pointer_action(selector, "click", progress, wait_for_enabled: true, force: force, strict: strict) do |point|
         @manager.mouse.click(point, button, click_count, progress: progress)
       end
@@ -383,7 +383,7 @@ module Crystalwright
     # Double-clicks the first element matching the selector.
     def dblclick(selector : String, button : MouseButton = MouseButton::Left,
                  force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
-      progress = Progress.new("dblclick #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("dblclick #{selector}", timeout || default_timeout)
       pointer_action(selector, "dblclick", progress, wait_for_enabled: true, force: force, strict: strict) do |point|
         @manager.mouse.click(point, button, 2, progress: progress)
       end
@@ -395,7 +395,7 @@ module Crystalwright
     # perfectly ordinary thing to want, since that is often what shows the
     # tooltip explaining why it is disabled.
     def hover(selector : String, force : Bool = false, timeout : Time::Span? = nil, strict : Bool = false) : Nil
-      progress = Progress.new("hover #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("hover #{selector}", timeout || default_timeout)
       pointer_action(selector, "hover", progress, wait_for_enabled: false, force: force, strict: strict) do |point|
         @manager.mouse.move(point.x, point.y, progress)
       end
@@ -409,7 +409,7 @@ module Crystalwright
     # that listens for `input` — which is every page built on a framework —
     # never learns about a value assigned directly.
     def fill(selector : String, value : String, timeout : Time::Span? = nil, strict : Bool = false) : Nil
-      progress = Progress.new("fill #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("fill #{selector}", timeout || default_timeout)
 
       retry_action(progress, "fill #{selector}") do |_|
         element = resolve(selector, progress, strict)
@@ -452,7 +452,7 @@ module Crystalwright
       wanted << {"index" => JSON::Any.new(index.to_i64)} if index
       raise Error.new("select_option needs a value, a label, an index or values") if wanted.empty?
 
-      progress = Progress.new("select_option #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("select_option #{selector}", timeout || default_timeout)
       chosen = [] of String
 
       retry_action(progress, "select_option #{selector}") do |_|
@@ -503,7 +503,7 @@ module Crystalwright
 
     # Focuses the first element matching the selector and presses one key.
     def press(selector : String, key : String, timeout : Time::Span? = nil, strict : Bool = false) : Nil
-      progress = Progress.new("press #{key} on #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("press #{key} on #{selector}", timeout || default_timeout)
 
       retry_action(progress, "press #{key} on #{selector}") do |_|
         element = resolve(selector, progress, strict)
@@ -622,6 +622,11 @@ module Crystalwright
       await_context(progress, "the utility world of #{describe}", ->(context : ExecutionContext) { context.name == wanted })
     end
 
+    # How long an operation here gets when the caller does not say.
+    def default_timeout : Time::Span
+      @manager.default_timeout
+    end
+
     # :nodoc:
     protected def resolve(selector : String, progress : Progress, strict : Bool = false) : ElementHandle?
       check_attached!
@@ -659,7 +664,7 @@ module Crystalwright
     private def set_checked(selector : String, wanted : Bool, force : Bool,
                             timeout : Time::Span?, strict : Bool) : Nil
       what = wanted ? "check" : "uncheck"
-      progress = Progress.new("#{what} #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("#{what} #{selector}", timeout || default_timeout)
       state = wanted ? "checked" : "unchecked"
 
       retry_action(progress, "#{what} #{selector}") do |attempt|

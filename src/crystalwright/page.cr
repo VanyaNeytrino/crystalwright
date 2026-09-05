@@ -38,6 +38,8 @@ module Crystalwright
     getter opener_target_id : String?
 
     @dialog_handlers = [] of Proc(CDP::Protocol::Page::JavascriptDialogOpeningEvent, Nil)
+    @console_handlers = [] of Proc(ConsoleMessage, Nil)
+    @page_error_handlers = [] of Proc(PageError, Nil)
     @mutex = Sync::Mutex.new
     @closed = false
 
@@ -57,6 +59,7 @@ module Crystalwright
     # not harmless: a script that counts would count twice.
     protected def start(timeout : Time::Span, init_scripts_sent : Bool = false) : Nil
       watch_dialogs
+      watch_console
       watch_crashes(timeout)
       @frames_manager.start(timeout)
       if init_scripts_sent
@@ -78,9 +81,9 @@ module Crystalwright
     #
     # For every tab rather than this one, and for tabs that do not exist yet,
     # use `Browser#add_init_script`.
-    def add_init_script(source : String, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+    def add_init_script(source : String, timeout : Time::Span? = nil) : Nil
       @session.execute(CDP::Protocol::Page::AddScriptToEvaluateOnNewDocumentRequest.new(
-        source: source), timeout)
+        source: source), timeout || default_timeout)
     end
 
     # The tab's top frame.
@@ -106,6 +109,21 @@ module Crystalwright
     # Navigates the main frame and waits for it to get where it was told to.
     def goto(url : String, wait_until : LoadState = LoadState::Load, timeout : Time::Span? = nil) : Nil
       main_frame.goto(url, wait_until, timeout)
+    end
+
+    # How long an operation in this tab gets when the caller does not say.
+    def default_timeout : Time::Span
+      @frames_manager.default_timeout
+    end
+
+    # Changes it, for this tab and every frame in it.
+    #
+    # Thirty seconds is Playwright's number and a reasonable one for a person
+    # watching. It is a poor one for a suite on a runner at half the speed:
+    # every timeout there is either a test taking thirty seconds to say what it
+    # could have said in five, or one failing because five was not enough.
+    def default_timeout=(span : Time::Span) : Nil
+      @frames_manager.default_timeout = span
     end
 
     # Loads the current address again.
@@ -145,7 +163,7 @@ module Crystalwright
     # after it is not racing a navigation this one started. It is public now
     # because the barrier is testable before there is anything to click.
     def with_navigation_signals(timeout : Time::Span? = nil, &)
-      progress = Progress.new("action", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("action", timeout || default_timeout)
       @frames_manager.with_signals(progress) { yield }
     end
 
@@ -155,10 +173,10 @@ module Crystalwright
     # `full_page` captures everything there is to scroll rather than what
     # happens to be on screen.
     def screenshot(path : String? = nil, full_page : Bool = false,
-                   timeout : Time::Span = DEFAULT_TIMEOUT) : Bytes
+                   timeout : Time::Span? = nil) : Bytes
       response = @session.execute(CDP::Protocol::Page::CaptureScreenshotRequest.new(
         format: CDP::Protocol::Page::CaptureScreenshotRequestFormat::Png,
-        capture_beyond_viewport: full_page), timeout)
+        capture_beyond_viewport: full_page), timeout || default_timeout)
 
       bytes = Base64.decode(response.data)
       if path
@@ -175,10 +193,10 @@ module Crystalwright
     # is the only version that works when the browser is headless and has no
     # window at all.
     def set_viewport(width : Int32, height : Int32, device_scale_factor : Float64 = 1.0,
-                     mobile : Bool = false, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+                     mobile : Bool = false, timeout : Time::Span? = nil) : Nil
       @session.execute(CDP::Protocol::Emulation::SetDeviceMetricsOverrideRequest.new(
         width: width, height: height,
-        device_scale_factor: device_scale_factor, mobile: mobile), timeout)
+        device_scale_factor: device_scale_factor, mobile: mobile), timeout || default_timeout)
     end
 
     # Tells the page it is somewhere.
@@ -187,9 +205,9 @@ module Crystalwright
     # ask. `grant_permissions("geolocation")` is the other half, and without it
     # a page gets the same refusal a person's browser would give it.
     def set_geolocation(latitude : Float64, longitude : Float64, accuracy : Float64 = 10.0,
-                        timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
+                        timeout : Time::Span? = nil) : Nil
       @session.execute(CDP::Protocol::Emulation::SetGeolocationOverrideRequest.new(
-        latitude: latitude, longitude: longitude, accuracy: accuracy), timeout)
+        latitude: latitude, longitude: longitude, accuracy: accuracy), timeout || default_timeout)
     end
 
     # Runs an action that downloads a file, and hands back the file.
@@ -199,7 +217,7 @@ module Crystalwright
     # download.save_into("tmp/reports")
     # ```
     def expect_download(timeout : Time::Span? = nil, &) : Download
-      progress = Progress.new("expect_download", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("expect_download", timeout || default_timeout)
       @browser.enable_downloads(progress.remaining)
 
       root = @session.connection.root
@@ -248,7 +266,7 @@ module Crystalwright
     # calling `.click()` from JavaScript does not, because a picker only opens
     # for a user gesture.
     def expect_file_chooser(timeout : Time::Span? = nil, &) : FileChooser
-      progress = Progress.new("expect_file_chooser", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("expect_file_chooser", timeout || default_timeout)
       @session.execute(CDP::Protocol::Page::SetInterceptFileChooserDialogRequest.new(
         enabled: true), progress.remaining)
 
@@ -287,7 +305,7 @@ module Crystalwright
 
     # :ditto:
     def set_input_files(selector : String, paths : Array(String), timeout : Time::Span? = nil) : Nil
-      progress = Progress.new("set_input_files #{selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("set_input_files #{selector}", timeout || default_timeout)
       element = main_frame.wait_for_selector(selector, ElementState::Attached, progress.remaining)
       raise Error.new("No element matched #{selector.inspect}.") unless element
 
@@ -309,7 +327,7 @@ module Crystalwright
     # only then released — so an init script registered on it is genuinely in
     # place before anything the page does.
     def expect_popup(timeout : Time::Span? = nil, &) : Page
-      progress = Progress.new("expect_popup", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("expect_popup", timeout || default_timeout)
       yield
 
       loop do
@@ -341,13 +359,13 @@ module Crystalwright
     #
     # The most recently added handler that matches wins, so a specific route
     # added later overrides a general one added earlier.
-    def route(pattern : String | Regex, timeout : Time::Span = DEFAULT_TIMEOUT, &handler : Route -> Nil) : Nil
-      @frames_manager.add_route(URLPattern.new(pattern), handler, timeout)
+    def route(pattern : String | Regex, timeout : Time::Span? = nil, &handler : Route -> Nil) : Nil
+      @frames_manager.add_route(URLPattern.new(pattern), handler, timeout || default_timeout)
     end
 
     # Stops answering requests for this pattern, or for all of them.
-    def unroute(pattern : (String | Regex)? = nil, timeout : Time::Span = DEFAULT_TIMEOUT) : Nil
-      @frames_manager.remove_routes(pattern.try { |value| URLPattern.new(value) }, timeout)
+    def unroute(pattern : (String | Regex)? = nil, timeout : Time::Span? = nil) : Nil
+      @frames_manager.remove_routes(pattern.try { |value| URLPattern.new(value) }, timeout || default_timeout)
     end
 
     # A locator for this selector, resolved fresh at every use.
@@ -611,6 +629,113 @@ module Crystalwright
     # Subscribed before anything else is enabled, and the domain turned on
     # afterwards, for the reason the frame manager writes down at length: a
     # subscription installed after the event is a subscription that missed it.
+    # Registers a handler for everything the page prints.
+    #
+    # The single most useful thing to have when a test fails on somebody else's
+    # machine, and the reason it is worth the plumbing: a page that logged the
+    # answer is indistinguishable from one that did not, unless somebody was
+    # listening.
+    def on_console(&handler : ConsoleMessage -> Nil) : Nil
+      @mutex.synchronize { @console_handlers << handler }
+    end
+
+    # Registers a handler for exceptions the page threw and nobody caught.
+    def on_page_error(&handler : PageError -> Nil) : Nil
+      @mutex.synchronize { @page_error_handlers << handler }
+    end
+
+    # What the page printed, as a line.
+    #
+    # Rendered from the arguments the way a console would: a string as itself,
+    # anything else by the description the protocol already computed. Handles
+    # are deliberately not kept — see `ConsoleMessage`.
+    private def render_console(event) : String
+      event.args.map { |argument| render_argument(argument) }.join(' ')
+    end
+
+    # One console argument, the way a console shows it.
+    #
+    # An object's `description` is the word "Object", which is worse than
+    # useless in a log: the whole reason to print an object is to see what is
+    # in it. The protocol already sends a preview for exactly this, so the
+    # preview is what gets rendered, and `…` marks where it was cut short
+    # rather than pretending that was all of it.
+    private def render_argument(argument) : String
+      return argument.value.try(&.as_s?) || argument.description || "" if argument.type.string?
+
+      if preview = argument.preview
+        unless preview.properties.empty?
+          inside = preview.properties.map do |property|
+            # Quoted when it is a string, because otherwise `{a: 1}` and
+            # `{a: "1"}` print the same and the whole point of showing the
+            # object is telling them apart.
+            shown = property.value
+            shown = shown.inspect if shown && property.type.string?
+            "#{property.name}: #{shown || "…"}"
+          end
+          inside << "…" if preview.overflow
+          return preview.subtype.try(&.array?) ? "[#{inside.join(", ")}]" : "{#{inside.join(", ")}}"
+        end
+        return preview.description || "" if preview.description
+      end
+
+      argument.description || argument.value.try(&.to_json) || argument.type.to_wire
+    end
+
+    private def format_stack(trace) : String?
+      return unless trace
+      trace.call_frames.map do |frame|
+        "  at #{frame.function_name.presence || "<anonymous>"} (#{frame.url}:#{frame.line_number + 1})"
+      end.join('\n').presence
+    end
+
+    private def watch_console : Nil
+      @session.on(CDP::Protocol::Runtime::ConsoleAPICalledEvent) do |event|
+        handlers = @mutex.synchronize { @console_handlers.dup }
+        next if handlers.empty?
+
+        frame = event.stack_trace.try(&.call_frames.first?)
+        message = ConsoleMessage.new(
+          type: event.type.to_wire,
+          text: render_console(event),
+          url: frame.try(&.url),
+          line: frame.try(&.line_number.+(1)))
+        # On a fiber of its own: a handler that touches the page would be
+        # waiting on the very fiber that has to deliver its answer.
+        spawn(name: "console") do
+          handlers.each do |handler|
+            handler.call(message)
+          rescue error
+            Log.error(exception: error) { "a console handler raised" }
+          end
+        end
+      end
+
+      @session.on(CDP::Protocol::Runtime::ExceptionThrownEvent) do |event|
+        handlers = @mutex.synchronize { @page_error_handlers.dup }
+        next if handlers.empty?
+
+        details = event.exception_details
+        thrown = details.exception
+        # A thrown `Error` describes itself with its stack already attached, so
+        # adding ours again prints it twice. The separate stack is for the case
+        # where the page threw something that is not an `Error` at all — a
+        # string, a number — and has nothing to say about where it came from.
+        described = thrown.try(&.description) || details.text
+        reported = PageError.new(
+          message: described,
+          stack: described.includes?("\n    at ") ? nil : format_stack(details.stack_trace),
+          url: details.url)
+        spawn(name: "page-error") do
+          handlers.each do |handler|
+            handler.call(reported)
+          rescue error
+            Log.error(exception: error) { "a page error handler raised" }
+          end
+        end
+      end
+    end
+
     private def watch_crashes(timeout : Time::Span) : Nil
       @session.on(CDP::Protocol::Inspector::TargetCrashedEvent) do
         Log.warn { "the page's renderer crashed" }

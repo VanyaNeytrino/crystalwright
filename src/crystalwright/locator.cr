@@ -225,7 +225,7 @@ module Crystalwright
     # The one question that is never strict: counting is how a caller finds out
     # there is more than one in the first place.
     def count(timeout : Time::Span? = nil) : Int32
-      progress = Progress.new("count #{@selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("count #{@selector}", timeout || @frame.default_timeout)
       @frame.utility_world(progress)
         .invoke("count", @selector, nil, progress: progress).as_f.to_i
     end
@@ -234,7 +234,7 @@ module Crystalwright
     #
     # Raises `StrictModeError` if it matches more than one.
     def element(timeout : Time::Span? = nil) : ElementHandle?
-      progress = Progress.new("resolve #{@selector}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("resolve #{@selector}", timeout || @frame.default_timeout)
       @frame.resolve(@selector, progress, strict: true)
     end
 

@@ -154,7 +154,7 @@ module Crystalwright
     # the first answer is often the wrong one.
     private def settle(what : String, expected : String, timeout : Time::Span?,
                        &probe : -> Tuple(Bool, String)) : Nil
-      progress = Progress.new("expect(#{@locator.selector}).#{what}", timeout || DEFAULT_TIMEOUT)
+      progress = Progress.new("expect(#{@locator.selector}).#{what}", timeout || @locator.frame.default_timeout)
       seen = "nothing yet"
 
       loop do

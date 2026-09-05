@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>noisy</title>
+<button id="throw">throw</button>
+<script>
+  console.log("plain", 42, { a: 1, b: "two" }, [1, 2, 3]);
+  console.warn("careful");
+  document.getElementById("throw").addEventListener("click", () => {
+    console.error("about to throw");
+    // Deliberately undefined: an exception nobody catches is the case worth
+    // reporting, because a page that dies quietly fails a test somewhere else.
+    missingFunction();
+  });
+</script>
