@@ -1,18 +1,5 @@
 require "./spec_helper"
 
-# Whether the tab's renderer has been reported dead yet.
-#
-# The event arrives on its own fiber a moment after the navigation is refused,
-# so the spec waits for it rather than assuming the order.
-private def crashed?(page) : Bool
-  page.evaluate("() => 1", timeout: 1.second)
-  false
-rescue Crystalwright::PageCrashedError
-  true
-rescue Crystalwright::TimeoutError
-  false
-end
-
 describe "browser", tags: "integration" do
   describe "the list of tabs" do
     it "holds the ones that are open, not the ones that were" do
@@ -45,20 +32,16 @@ describe "browser", tags: "integration" do
           browser.new_page do |page|
             page.goto(server.url("/a"))
 
-            # The protocol's own way of crashing a tab, sent through the raw
-            # session this shard deliberately leaves reachable. `chrome://crash`
-            # was the first attempt and it is not portable: on the Chromium the
-            # Linux runners install it produced no crash at all, and the spec
-            # failed for the wrong reason.
+            # Told rather than made to happen. Two ways of crashing a tab
+            # were tried first and neither is portable: on the Chromium the
+            # Linux runners install, `chrome://crash` does nothing at all and
+            # `Page.crash` leaves `evaluate` still answering, so CI failed
+            # twice reporting a crash that never occurred.
             #
-            # The command never answers — the renderer it would answer from is
-            # what it destroys — so the timeout is the success case.
-            begin
-              page.session.execute_raw("Page.crash", timeout: 2.seconds)
-            rescue CDP::Error
-            end
-
-            eventually(5.seconds, "the crash was never reported") { crashed?(page) }
+            # What this shard promises is what it does when the browser says a
+            # renderer died, and that is the half worth pinning. Whether a
+            # particular Chromium will die on demand is the platform's business.
+            page.frames_manager.crashed!
 
             # A dead renderer answers nothing, so without noticing the crash
             # every call waits out its own deadline and then reports a timeout

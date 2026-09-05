@@ -470,7 +470,15 @@ module Crystalwright
     # :nodoc:
     #
     # The tab's renderer died.
-    protected def crashed! : Nil
+    #
+    # Public rather than protected so that a spec can state the contract without
+    # asking a browser to die on demand. Chromium on Linux will not: neither
+    # `chrome://crash` nor `Page.crash` produces `Inspector.targetCrashed` there,
+    # and `evaluate` keeps answering — measured twice on CI. What this shard
+    # promises is what it does *when told*, and that is testable everywhere; that
+    # Chrome on macOS really does say it is the other half, and it is not one a
+    # spec can insist on.
+    def crashed! : Nil
       @mutex.synchronize { @crashed = true }
       ring
     end
